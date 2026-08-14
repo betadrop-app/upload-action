@@ -1,0 +1,45 @@
+# Sanity checks that need no BetaDrop token, so they can run on every PR to this repo:
+# the glob-resolution logic is where the sharp edges are, and it is testable without uploading.
+name: selftest
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  glob-resolution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zero matches fails with a clear error
+        id: none
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob; matches=( ./no-such-dir/*.apk ); shopt -u nullglob
+          [ "${#matches[@]}" -eq 0 ] && exit 1 || exit 0
+      - name: Assert zero-match failed
+        shell: bash
+        run: '[ "${{ steps.none.outcome }}" = "failure" ]'
+
+      - name: Multiple matches fails rather than picking one
+        id: many
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out && touch out/a.apk out/b.apk
+          shopt -s nullglob; matches=( out/*.apk ); shopt -u nullglob
+          [ "${#matches[@]}" -gt 1 ] && exit 1 || exit 0
+      - name: Assert multi-match failed
+        shell: bash
+        run: '[ "${{ steps.many.outcome }}" = "failure" ]'
+
+      - name: Exactly one match resolves
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p single && touch single/app.apk
+          shopt -s nullglob; matches=( single/*.apk ); shopt -u nullglob
+          [ "${#matches[@]}" -eq 1 ] && [ "${matches[0]}" = "single/app.apk" ]

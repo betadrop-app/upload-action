@@ -1,0 +1,112 @@
+# betadrop/upload-action — publish an .ipa/.apk from CI and get the OTA install link.
+#
+# A composite action rather than a JS action, deliberately. The heavy lifting already exists as
+# the published CLI (@betadrop/cli), so a JS action would mean maintaining a second upload client
+# plus a checked-in dist/ bundle. Composite keeps this repo to one YAML file that shells out to
+# the same tool a developer uses locally — one client to maintain, and CI behaves exactly like
+# the laptop. Node is preinstalled on every GitHub-hosted runner image, so `npm i -g` needs no
+# setup step.
+name: "BetaDrop Upload"
+description: >-
+  Upload an iOS .ipa or Android .apk to BetaDrop and get an instant over-the-air install link —
+  no TestFlight review wait, no tester accounts. Prints the link and adds it to the job summary.
+author: "BetaDrop"
+
+branding:
+  icon: "upload-cloud"
+  color: "blue"
+
+inputs:
+  file:
+    description: >-
+      Path to the build artifact (.ipa or .apk). A glob is allowed — e.g.
+      app/build/outputs/apk/release/*.apk — and must match exactly one file.
+    required: true
+  token:
+    description: >-
+      A BetaDrop API token (bd_live_…). Create one at https://betadrop.app/settings under
+      CLI tokens, and store it as a repository secret — never inline it in the workflow.
+    required: true
+  name:
+    description: "Override the build name shown on the install page (defaults to the app's own name)."
+    required: false
+    default: ""
+  notes:
+    description: "Release notes for this build — e.g. the commit message."
+    required: false
+    default: ""
+  cli-version:
+    description: "Version of @betadrop/cli to use. Pin this for reproducible pipelines."
+    required: false
+    default: "latest"
+
+outputs:
+  install-url:
+    description: "The OTA install link for the uploaded build."
+    value: ${{ steps.publish.outputs.install-url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install BetaDrop CLI
+      shell: bash
+      env:
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: npm install -g "@betadrop/cli@${CLI_VERSION}"
+
+    - name: Publish build
+      id: publish
+      shell: bash
+      # Inputs are passed through env, not interpolated into the script. `${{ inputs.file }}`
+      # spliced directly into `run:` would let a filename (or a workflow expression) inject shell —
+      # the standard composite-action footgun.
+      env:
+        BETADROP_TOKEN: ${{ inputs.token }}
+        INPUT_FILE: ${{ inputs.file }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_NOTES: ${{ inputs.notes }}
+      run: |
+        set -euo pipefail
+
+        # Resolve the glob to exactly one file. Build outputs often carry hashed or versioned
+        # names, so a literal-path-only input would push everyone into a find/ls preamble; but
+        # silently taking the first of several matches would upload an arbitrary build, which is
+        # worse than failing. One match or an actionable error.
+        shopt -s nullglob
+        matches=( $INPUT_FILE )
+        shopt -u nullglob
+        if [ "${#matches[@]}" -eq 0 ]; then
+          echo "::error::No file matches '$INPUT_FILE'. Check the path — is the build step before this one, and did it write where you expect?"
+          exit 1
+        fi
+        if [ "${#matches[@]}" -gt 1 ]; then
+          echo "::error::'$INPUT_FILE' matches ${#matches[@]} files (${matches[*]}). Narrow the glob so exactly one build is published."
+          exit 1
+        fi
+        file="${matches[0]}"
+        echo "Publishing $file"
+
+        # --ci prints only the install URL, which is exactly what an output wants. The optional
+        # flags are appended as an array — quoting survives spaces in a commit-message note.
+        args=( publish "$file" --ci )
+        [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
+        [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
+        url="$(betadrop "${args[@]}")"
+        if [ -z "$url" ]; then
+          echo "::error::Publish produced no install URL."
+          exit 1
+        fi
+
+        echo "install-url=$url" >> "$GITHUB_OUTPUT"
+
+        # The human-facing copy of the same fact: a tester-ready link on the run page itself,
+        # so nobody digs through step logs to find it.
+        {
+          echo "### 📲 BetaDrop build published"
+          echo ""
+          echo "**Install link:** $url"
+          echo ""
+          echo "Open it on a phone to install over the air — no TestFlight, no tester accounts."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        echo "Install link: $url"
