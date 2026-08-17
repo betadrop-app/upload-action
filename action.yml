@@ -24,8 +24,9 @@ inputs:
     required: true
   token:
     description: >-
-      A BetaDrop API token (bd_live_…). Create one at https://betadrop.app/settings under
-      CLI tokens, and store it as a repository secret — never inline it in the workflow.
+      A BetaDrop API token (bd_live_…). Create one at betadrop.app under
+      Settings → Developer → API tokens, and store it as a repository secret — never inline
+      it in the workflow.
     required: true
   name:
     description: "Override the build name shown on the install page (defaults to the app's own name)."
@@ -86,12 +87,15 @@ runs:
         file="${matches[0]}"
         echo "Publishing $file"
 
-        # --ci prints only the install URL, which is exactly what an output wants. The optional
-        # flags are appended as an array — quoting survives spaces in a commit-message note.
+        # --ci prints the install URL as the *last* line of stdout, which is exactly what an
+        # output wants. Take the last line rather than the whole capture: the CLI's contract is
+        # "last line", so any future warning printed ahead of it would otherwise become part of
+        # the URL — and a multi-line GITHUB_OUTPUT value is both broken and injectable. The
+        # optional flags are appended as an array — quoting survives spaces in a commit message.
         args=( publish "$file" --ci )
         [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
         [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
-        url="$(betadrop "${args[@]}")"
+        url="$(betadrop "${args[@]}" | tail -n 1)"
         if [ -z "$url" ]; then
           echo "::error::Publish produced no install URL."
           exit 1

@@ -9,7 +9,7 @@ The install link is exposed as a step output and added to the workflow run's sum
 ```yaml
 - name: Publish to BetaDrop
   id: betadrop
-  uses: betadrop/upload-action@v1
+  uses: betadrop-app/upload-action@v1
   with:
     file: app/build/outputs/apk/release/*.apk
     token: ${{ secrets.BETADROP_TOKEN }}
@@ -29,7 +29,7 @@ jobs:
       - name: Build the .ipa
         run: bundle exec fastlane gym --export_method ad-hoc
       - name: Publish to BetaDrop
-        uses: betadrop/upload-action@v1
+        uses: betadrop-app/upload-action@v1
         with:
           file: "*.ipa"
           token: ${{ secrets.BETADROP_TOKEN }}
@@ -49,7 +49,7 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease
       - name: Publish to BetaDrop
-        uses: betadrop/upload-action@v1
+        uses: betadrop-app/upload-action@v1
         with:
           file: app/build/outputs/apk/release/*.apk
           token: ${{ secrets.BETADROP_TOKEN }}
@@ -61,7 +61,7 @@ jobs:
 ```yaml
 - name: Publish to BetaDrop
   id: betadrop
-  uses: betadrop/upload-action@v1
+  uses: betadrop-app/upload-action@v1
   with:
     file: "*.apk"
     token: ${{ secrets.BETADROP_TOKEN }}
@@ -82,7 +82,7 @@ jobs:
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `file` | yes | — | Path to the `.ipa`/`.apk`. Globs allowed; must match exactly one file. |
-| `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → CLI tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
+| `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
