@@ -1,45 +1,143 @@
-# Sanity checks that need no BetaDrop token, so they can run on every PR to this repo:
-# the glob-resolution logic is where the sharp edges are, and it is testable without uploading.
+# Sanity checks that need no BetaDrop token, so they can run on every PR to this repo.
+#
+# These run the *shipped* script — the `run:` block is extracted straight out of action.yml and
+# executed against a stub `betadrop` on PATH. An earlier version of this workflow re-implemented
+# the glob logic inline, which meant it tested a copy: it stayed green while the real script
+# mis-handled a path containing a space. Extracting keeps the test honest by construction.
 name: selftest
 on:
   push: { branches: [main] }
   pull_request:
 
 jobs:
-  glob-resolution:
+  resolve-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Zero matches fails with a clear error
-        id: none
-        continue-on-error: true
+      - name: Extract the publish script from action.yml
+        shell: bash
+        # Ruby ships with a YAML parser in its stdlib and is preinstalled on the runner image,
+        # so this needs no install step (python3 is present too, but PyYAML is not guaranteed).
+        run: |
+          set -euo pipefail
+          ruby -ryaml -e '
+            a = YAML.load_file("action.yml")
+            pub = a["runs"]["steps"].find { |s| s["id"] == "publish" }
+            abort("no step with id: publish in action.yml") if pub.nil?
+            File.write("/tmp/publish.sh", pub["run"])
+          '
+          bash -n /tmp/publish.sh
+          echo "Extracted $(wc -l < /tmp/publish.sh) lines"
+
+      - name: Stub the CLI
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob; matches=( ./no-such-dir/*.apk ); shopt -u nullglob
-          [ "${#matches[@]}" -eq 0 ] && exit 1 || exit 0
-      - name: Assert zero-match failed
+          mkdir -p /tmp/stub
+          # Mimics the real --ci contract: the install URL is the LAST line of stdout, and other
+          # output may precede it. If the action ever goes back to capturing all of stdout, the
+          # "single line" assertion below fails.
+          cat > /tmp/stub/betadrop <<'EOS'
+          #!/bin/bash
+          echo "npm warn deprecated transitive-dep@1.0.0"
+          echo "https://betadrop.app/install/?i=stub123"
+          EOS
+          chmod +x /tmp/stub/betadrop
+          echo "/tmp/stub" >> "$GITHUB_PATH"
+
+      - name: A single match publishes and yields a one-line URL output
         shell: bash
-        run: '[ "${{ steps.none.outcome }}" = "failure" ]'
+        env:
+          INPUT_NAME: ""
+          INPUT_NOTES: "fix: a commit message with spaces"
+        run: |
+          set -euo pipefail
+          mkdir -p single && touch single/app-release.apk
+          export INPUT_FILE='single/*.apk'
+          export GITHUB_OUTPUT=/tmp/out.single GITHUB_STEP_SUMMARY=/tmp/sum.single
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
+          cat "$GITHUB_OUTPUT"
+          [ "$(wc -l < "$GITHUB_OUTPUT")" -eq 1 ] || { echo "output is not a single line"; exit 1; }
+          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
+          grep -q 'stub123' "$GITHUB_STEP_SUMMARY"
+
+      - name: A literal path containing a space resolves
+        shell: bash
+        env:
+          INPUT_NAME: ""
+          INPUT_NOTES: ""
+        run: |
+          set -euo pipefail
+          mkdir -p spaced && touch "spaced/My App.ipa"
+          export INPUT_FILE='spaced/My App.ipa'
+          export GITHUB_OUTPUT=/tmp/out.spaced GITHUB_STEP_SUMMARY=/tmp/sum.spaced
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
+          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
+
+      - name: A glob whose pattern contains a space resolves
+        shell: bash
+        env:
+          INPUT_NAME: ""
+          INPUT_NOTES: ""
+        run: |
+          set -euo pipefail
+          mkdir -p spaced2 && touch "spaced2/My App.ipa"
+          export INPUT_FILE='spaced2/My A*.ipa'
+          export GITHUB_OUTPUT=/tmp/out.spaced2 GITHUB_STEP_SUMMARY=/tmp/sum.spaced2
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
+          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
+
+      - name: Zero matches fails with an actionable error
+        id: none
+        continue-on-error: true
+        shell: bash
+        env:
+          INPUT_FILE: "./no-such-dir/*.apk"
+          INPUT_NAME: ""
+          INPUT_NOTES: ""
+        run: |
+          set -euo pipefail
+          export GITHUB_OUTPUT=/tmp/out.none GITHUB_STEP_SUMMARY=/tmp/sum.none
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
+
+      - name: A literal path that does not exist also fails
+        id: absent
+        continue-on-error: true
+        shell: bash
+        env:
+          INPUT_FILE: "./no-such-dir/app.apk"
+          INPUT_NAME: ""
+          INPUT_NOTES: ""
+        run: |
+          set -euo pipefail
+          export GITHUB_OUTPUT=/tmp/out.absent GITHUB_STEP_SUMMARY=/tmp/sum.absent
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
 
       - name: Multiple matches fails rather than picking one
         id: many
         continue-on-error: true
         shell: bash
+        env:
+          INPUT_FILE: "multi/*.apk"
+          INPUT_NAME: ""
+          INPUT_NOTES: ""
         run: |
           set -euo pipefail
-          mkdir -p out && touch out/a.apk out/b.apk
-          shopt -s nullglob; matches=( out/*.apk ); shopt -u nullglob
-          [ "${#matches[@]}" -gt 1 ] && exit 1 || exit 0
-      - name: Assert multi-match failed
-        shell: bash
-        run: '[ "${{ steps.many.outcome }}" = "failure" ]'
+          mkdir -p multi && touch multi/a.apk multi/b.apk
+          export GITHUB_OUTPUT=/tmp/out.many GITHUB_STEP_SUMMARY=/tmp/sum.many
+          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
+          bash /tmp/publish.sh
 
-      - name: Exactly one match resolves
+      - name: Assert every failure case actually failed
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p single && touch single/app.apk
-          shopt -s nullglob; matches=( single/*.apk ); shopt -u nullglob
-          [ "${#matches[@]}" -eq 1 ] && [ "${matches[0]}" = "single/app.apk" ]
+          [ "${{ steps.none.outcome }}"   = "failure" ] || { echo "zero-match did not fail";     exit 1; }
+          [ "${{ steps.absent.outcome }}" = "failure" ] || { echo "absent path did not fail";    exit 1; }
+          [ "${{ steps.many.outcome }}"   = "failure" ] || { echo "multi-match did not fail";    exit 1; }

@@ -73,9 +73,26 @@ runs:
         # names, so a literal-path-only input would push everyone into a find/ls preamble; but
         # silently taking the first of several matches would upload an arbitrary build, which is
         # worse than failing. One match or an actionable error.
+        # Emptying IFS disables word splitting while leaving pathname expansion intact, so
+        # "build/My App.ipa" stays one word instead of splitting into two bogus "matches" —
+        # Xcode output paths routinely contain spaces. A glob still fans out to one array
+        # element per file, because glob results are never word-split.
+        prev_ifs=$IFS
+        IFS=
         shopt -s nullglob
         matches=( $INPUT_FILE )
         shopt -u nullglob
+        IFS=$prev_ifs
+
+        # nullglob drops a *pattern* that matches nothing, but a literal path is not a pattern
+        # and survives even when the file is absent. Filter to what actually exists so a typo
+        # lands on the "no file matches" error below rather than on a confusing upload failure.
+        present=()
+        for m in ${matches[@]+"${matches[@]}"}; do
+          [ -e "$m" ] && present+=( "$m" )
+        done
+        matches=( ${present[@]+"${present[@]}"} )
+
         if [ "${#matches[@]}" -eq 0 ]; then
           echo "::error::No file matches '$INPUT_FILE'. Check the path — is the build step before this one, and did it write where you expect?"
           exit 1
