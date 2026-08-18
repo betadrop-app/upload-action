@@ -1,5 +1,11 @@
 # BetaDrop Upload Action
 
+[![Listed on the GitHub Marketplace](https://img.shields.io/badge/Marketplace-BetaDrop%20Upload-2ea44f?logo=github)](https://github.com/marketplace/actions/betadrop-upload)
+
+<!-- The Marketplace slug comes from action.yml's `name:` ("BetaDrop Upload"), NOT the repository
+     name — /marketplace/actions/betadrop-upload-action is a 404. If the action is ever renamed,
+     this link breaks silently, because a broken badge still renders as an image. -->
+
 Upload an iOS `.ipa` or Android `.apk` from your CI pipeline to [BetaDrop](https://betadrop.app) and get an instant over-the-air install link — no TestFlight review wait, no Play track, no tester accounts. Testers open the link on their phone and install from the browser.
 
 The install link is exposed as a step output and added to the workflow run's summary page, so every green build ends with a tester-ready link.
