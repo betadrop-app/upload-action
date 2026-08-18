@@ -1,4 +1,4 @@
-# betadrop/upload-action — publish an .ipa/.apk from CI and get the OTA install link.
+# betadrop-app/upload-action — publish an .ipa/.apk from CI and get the OTA install link.
 #
 # A composite action rather than a JS action, deliberately. The heavy lifting already exists as
 # the published CLI (@betadrop/cli), so a JS action would mean maintaining a second upload client
@@ -7,9 +7,10 @@
 # the laptop. Node is preinstalled on every GitHub-hosted runner image, so `npm i -g` needs no
 # setup step.
 name: "BetaDrop Upload"
-description: >-
-  Upload an iOS .ipa or Android .apk to BetaDrop and get an instant over-the-air install link —
-  no TestFlight review wait, no tester accounts. Prints the link and adds it to the job summary.
+# GitHub Marketplace rejects a description of 125 characters or more, and this string is also the
+# one-line blurb shown in Marketplace search results — so it has to carry both platforms and the
+# hook inside that budget. The longer pitch lives in README.md, which the listing renders in full.
+description: "Upload an iOS .ipa or Android .apk from CI and get an instant over-the-air install link. No TestFlight wait."
 author: "BetaDrop"
 
 branding:
