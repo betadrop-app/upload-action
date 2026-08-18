@@ -9,7 +9,7 @@ The install link is exposed as a step output and added to the workflow run's sum
 ```yaml
 - name: Publish to BetaDrop
   id: betadrop
-  uses: betadrop-app/upload-action@v1
+  uses: BetaDropApp/upload-action@v1
   with:
     file: app/build/outputs/apk/release/*.apk
     token: ${{ secrets.BETADROP_TOKEN }}
@@ -29,7 +29,7 @@ jobs:
       - name: Build the .ipa
         run: bundle exec fastlane gym --export_method ad-hoc
       - name: Publish to BetaDrop
-        uses: betadrop-app/upload-action@v1
+        uses: BetaDropApp/upload-action@v1
         with:
           file: "*.ipa"
           token: ${{ secrets.BETADROP_TOKEN }}
@@ -49,7 +49,7 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease
       - name: Publish to BetaDrop
-        uses: betadrop-app/upload-action@v1
+        uses: BetaDropApp/upload-action@v1
         with:
           file: app/build/outputs/apk/release/*.apk
           token: ${{ secrets.BETADROP_TOKEN }}
@@ -61,7 +61,7 @@ jobs:
 ```yaml
 - name: Publish to BetaDrop
   id: betadrop
-  uses: betadrop-app/upload-action@v1
+  uses: BetaDropApp/upload-action@v1
   with:
     file: "*.apk"
     token: ${{ secrets.BETADROP_TOKEN }}
