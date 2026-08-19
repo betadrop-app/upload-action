@@ -104,6 +104,7 @@ jobs:
 - Works on `ubuntu`, `macos`, and `windows` runners (Node is preinstalled on all GitHub-hosted images).
 - A glob matching **more than one** file fails the step rather than uploading an arbitrary build — narrow the pattern.
 - Build links follow your account's retention settings; see [pricing](https://betadrop.app/pricing/).
+- An **ad-hoc iOS build uploaded from CI still only installs on registered devices**. If a tester reports "it downloads but won't open", their UDID was not in the provisioning profile when the IPA was signed. Send them the [UDID checker](https://betadrop.app/udid-checker/) — it reads the UDID off the iPhone itself, so they don't need a Mac or a cable — then add the device in the Apple Developer portal and re-sign.
 - This action is a thin wrapper over the same [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) you'd use locally, so CI behaves exactly like your machine.
 
 ## License
