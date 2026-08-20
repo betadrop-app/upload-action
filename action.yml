@@ -123,10 +123,21 @@ runs:
 
         # The human-facing copy of the same fact: a tester-ready link on the run page itself,
         # so nobody digs through step logs to find it.
+        #
+        # This panel is the only place BetaDrop appears in front of an audience it did not have
+        # to acquire — it renders on the run page of every green build, for the whole team, not
+        # just whoever triggered it. So it carries the mark rather than an emoji: job summaries
+        # render a subset of HTML, and an <img> at an absolute URL is the one way to get real
+        # brand into a surface hosted entirely on github.com.
+        #
+        # Kept deliberately small. A summary that shouts is a summary teams delete from their
+        # workflow, and the link is the only thing anyone is here for.
         {
-          echo "### 📲 BetaDrop build published"
+          echo "<img src=\"https://betadrop.app/logo.png\" width=\"28\" align=\"left\" alt=\"BetaDrop\">"
           echo ""
-          echo "**Install link:** $url"
+          echo "### Build published to BetaDrop"
+          echo ""
+          echo "**[Install on a device]($url)** · \`$url\`"
           echo ""
           echo "Open it on a phone to install over the air — no TestFlight, no tester accounts."
         } >> "$GITHUB_STEP_SUMMARY"
