@@ -33,13 +33,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the .ipa
-        run: bundle exec fastlane gym --export_method ad-hoc
+        run: bundle exec fastlane gym --export_method release-testing
       - name: Publish to BetaDrop
         uses: betadrop-app/upload-action@v1
         with:
           file: "*.ipa"
           token: ${{ secrets.BETADROP_TOKEN }}
 ```
+
+`release-testing` is Apple's current name for ad-hoc distribution. gym copies this value
+straight into the ExportOptions plist's `method` key, where Apple deprecated `ad-hoc` in
+Xcode 15.4 — and Xcode 26, which is what `macos-latest` resolves to on GitHub-hosted
+runners, rejects it outright. If your fastlane is old enough to reject the new name, pass
+it through `export_options: { method: "release-testing" }` in a Fastfile instead. Either
+way the export runs before this action does, so getting it wrong fails the build a step
+early.
 
 ### Android example
 
