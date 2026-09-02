@@ -174,4 +174,8 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
         echo "Install link: $url"
-        [ -n "$channel_url" ] && echo "Channel link: $channel_url"
+        # `if`, not `[ ] &&`: this is the last command in the step, so a bare test that is false
+        # would become the step's exit status and fail every run that did not ask for a channel.
+        if [ -n "$channel_url" ]; then
+          echo "Channel link: $channel_url"
+        fi
