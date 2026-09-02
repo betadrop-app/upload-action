@@ -37,6 +37,15 @@ inputs:
     description: "Release notes for this build — e.g. the commit message."
     required: false
     default: ""
+  channel:
+    description: >-
+      A channel slug to point at this build once it is live — e.g. nightly. The channel's link
+      (and any "Download from BetaDrop" button embedded with it) then serves this build with
+      nothing to click. Pro and Studio plans; claim the channel first at betadrop.app/channels.
+      A channel that cannot be used fails the step before anything is uploaded. Needs
+      @betadrop/cli 0.3.0 or newer.
+    required: false
+    default: ""
   cli-version:
     description: "Version of @betadrop/cli to use. Pin this for reproducible pipelines."
     required: false
@@ -46,6 +55,9 @@ outputs:
   install-url:
     description: "The OTA install link for the uploaded build."
     value: ${{ steps.publish.outputs.install-url }}
+  channel-url:
+    description: "The channel's stable install link, when `channel` was set. Empty otherwise."
+    value: ${{ steps.publish.outputs.channel-url }}
 
 runs:
   using: "composite"
@@ -67,6 +79,7 @@ runs:
         INPUT_FILE: ${{ inputs.file }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_NOTES: ${{ inputs.notes }}
+        INPUT_CHANNEL: ${{ inputs.channel }}
       run: |
         set -euo pipefail
 
@@ -113,13 +126,25 @@ runs:
         args=( publish "$file" --ci )
         [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
         [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
-        url="$(betadrop "${args[@]}" | tail -n 1)"
+        [ -n "$INPUT_CHANNEL" ] && args+=( --channel "$INPUT_CHANNEL" )
+        # The whole of stdout is captured, then split: the CLI's contract is that the install
+        # URL is the LAST line, and that with --channel the line above it is
+        # `channel-url=<link>`. A non-zero exit from the CLI — including "uploaded, but the
+        # channel did not move" — fails this step here, before any output is written.
+        out="$(betadrop "${args[@]}")"
+        url="$(printf '%s\n' "$out" | tail -n 1)"
+        channel_url="$(printf '%s\n' "$out" | grep -m1 '^channel-url=' | cut -d= -f2- || true)"
         if [ -z "$url" ]; then
           echo "::error::Publish produced no install URL."
           exit 1
         fi
+        if [ -n "$INPUT_CHANNEL" ] && [ -z "$channel_url" ]; then
+          echo "::error::A channel was requested but the CLI reported no channel link. Is @betadrop/cli 0.3.0 or newer installed? (cli-version: ${CLI_VERSION:-latest})"
+          exit 1
+        fi
 
         echo "install-url=$url" >> "$GITHUB_OUTPUT"
+        echo "channel-url=$channel_url" >> "$GITHUB_OUTPUT"
 
         # The human-facing copy of the same fact: a tester-ready link on the run page itself,
         # so nobody digs through step logs to find it.
@@ -139,7 +164,14 @@ runs:
           echo ""
           echo "**[Install on a device]($url)** · \`$url\`"
           echo ""
+          if [ -n "$channel_url" ]; then
+            # The channel link leads for the reader who bookmarks: it is the one that will still
+            # point at the newest build next week, which the per-build link above will not.
+            echo "Channel \`$INPUT_CHANNEL\` now serves this build — the stable link is **[$channel_url]($channel_url)**."
+            echo ""
+          fi
           echo "Open it on a phone to install over the air — no TestFlight, no tester accounts."
         } >> "$GITHUB_STEP_SUMMARY"
 
         echo "Install link: $url"
+        [ -n "$channel_url" ] && echo "Channel link: $channel_url"

@@ -99,6 +99,7 @@ jobs:
 | `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
+| `channel` | no | — | A [channel](https://betadrop.app/channels/) slug to point at this build once it is live — e.g. `nightly`. The channel's link, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the channel first. A channel that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
 
 ## Outputs
@@ -106,6 +107,24 @@ jobs:
 | Output | Description |
 | --- | --- |
 | `install-url` | The OTA install link for the uploaded build. |
+| `channel-url` | The channel's stable install link when `channel` was set; empty otherwise. |
+
+### One link that follows every build
+
+```yaml
+- name: Publish to BetaDrop
+  id: betadrop
+  uses: betadrop-app/upload-action@v1
+  with:
+    file: app/build/outputs/apk/release/*.apk
+    token: ${{ secrets.BETADROP_TOKEN }}
+    channel: nightly
+
+- run: echo "Testers keep using ${{ steps.betadrop.outputs.channel-url }}"
+```
+
+If the build uploads but the channel could not be pointed at it, the step fails — a pipeline that
+asked for a channel must not go green when the channel did not move.
 
 ## Notes
 
