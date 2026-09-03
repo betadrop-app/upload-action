@@ -126,6 +126,19 @@ jobs:
 If the build uploads but the channel could not be pointed at it, the step fails — a pipeline that
 asked for a channel must not go green when the channel did not move.
 
+### A download button that follows the channel
+
+Wrap the channel link in the "Download from BetaDrop" badge and paste it in your README — one
+Markdown image link, no script. With `channel:` set on the step above, every merge updates what
+the button installs and the README never changes.
+
+```markdown
+[![Download MyApp from BetaDrop](https://betadrop.app/badge/download-dark.svg)](https://betadrop.app/install/nightly?ref=badge)
+```
+
+Copy the exact snippet (dark or light, HTML or Markdown) from the embed panel under any build's
+install link. Details and guidelines: <https://betadrop.app/download-button/>.
+
 ## Notes
 
 - Works on `ubuntu`, `macos`, and `windows` runners (Node is preinstalled on all GitHub-hosted images).
