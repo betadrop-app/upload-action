@@ -51,6 +51,38 @@ jobs:
           bash -n comment.sh
           echo "Extracted $(wc -l < publish.sh) + $(wc -l < comment.sh) lines"
 
+      - name: "No workflow expressions inside a run: block"
+        shell: bash
+        # The template engine substitutes every ${{ }} it finds in a `run:` block *before* bash
+        # sees the script - inside comments too, since a YAML block scalar has no comments as far
+        # as the engine is concerned. Two ways that bites:
+        #
+        #   * `secrets` is not a context a composite action can read, so a single mention of one
+        #     anywhere in a run: block makes the whole action.yml fail to load. Nothing in this
+        #     repo's own CI notices, because the case suite runs the extracted script rather than
+        #     the action - v1.1.1 shipped exactly that and was broken for every consumer.
+        #   * an input spliced into the script is the composite-action injection footgun this
+        #     action deliberately avoids by passing inputs through env.
+        #
+        # The wiring job catches the fatal half by calling the action. This catches both halves,
+        # before anything runs, and says which line.
+        run: |
+          set -euo pipefail
+          ruby -ryaml -e '
+            bad = YAML.load_file("action.yml")["runs"]["steps"].flat_map do |st|
+              (st["run"] || "").lines.each_with_index
+                .select { |line, _| line.include?("${{") }
+                .map { |line, i| "  #{st["id"] || st["name"]} line #{i + 1}: #{line.strip}" }
+            end
+            unless bad.empty?
+              warn "A run: block contains a workflow expression. The template engine evaluates it"
+              warn "before bash runs - reword the line so the literal ${{ never appears:"
+              warn bad
+              exit 1
+            end
+          '
+          echo "No run: block contains a workflow expression."
+
       - uses: actions/upload-artifact@v7
         with:
           name: publish-script

@@ -82,9 +82,9 @@ runs:
         CLI_VERSION: ${{ inputs.cli-version }}
       run: |
         set -euo pipefail
-        # `default:` only fills in an *omitted* input. `cli-version: ""` — which is what
-        # `cli-version: ${{ env.SOMETHING_UNSET }}` evaluates to — arrives as an empty string
-        # and would build the spec "@betadrop/cli@", so re-apply the default here.
+        # `default:` only fills in an *omitted* input. An input written as an expression that
+        # evaluates to nothing arrives as an empty string instead, and would build the spec
+        # "@betadrop/cli@", so re-apply the default here.
         version="${CLI_VERSION:-latest}"
         npm install -g --no-fund --no-audit "@betadrop/cli@${version}"
         # npm can install successfully into a global prefix that is not on PATH (it happens on
@@ -115,13 +115,13 @@ runs:
       run: |
         set -euo pipefail
 
-        # A token passed as `${{ secrets.X }}` is masked by the runner already. One pasted
+        # A token that arrived from a repository secret is masked by the runner already. One pasted
         # literally — or read out of a file by a previous step — is not, and would print in
         # clear if any command here ever echoed it. Registering the mask costs one line.
         if [ -n "${BETADROP_TOKEN:-}" ]; then
           echo "::add-mask::$BETADROP_TOKEN"
         else
-          echo "::error::No token supplied. Create one at betadrop.app under Settings → Developer → API tokens and pass it as token: \${{ secrets.BETADROP_TOKEN }}."
+          echo "::error::No token supplied. Create a BetaDrop API token at betadrop.app under Settings → Developer → API tokens, store it as a repository secret, and pass it to this action's token: input. See https://github.com/betadrop-app/upload-action#inputs"
           exit 1
         fi
 
@@ -155,9 +155,9 @@ runs:
           esac
         fi
 
-        # A path arriving from a YAML block scalar or from `${{ steps.build.outputs.path }}`
-        # routinely carries a trailing newline. Unaddressed it becomes part of the pattern, the
-        # glob matches nothing, and the run reports a missing build that is sitting right there.
+        # A path arriving from a YAML block scalar, or from a previous step's output, routinely
+        # carries a trailing newline. Unaddressed it becomes part of the pattern, the glob matches
+        # nothing, and the run reports a missing build that is sitting right there.
         INPUT_FILE="$(printf '%s' "$INPUT_FILE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
         if [ -z "$INPUT_FILE" ]; then
           echo "::error::file is empty. Point it at the .ipa/.apk your build step produced."
