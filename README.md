@@ -33,13 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the .ipa
-        run: bundle exec fastlane gym --export_method release-testing
+        run: fastlane gym --export_method release-testing
       - name: Publish to BetaDrop
         uses: betadrop-app/upload-action@v1
         with:
           file: "*.ipa"
           token: ${{ secrets.BETADROP_TOKEN }}
 ```
+
+fastlane is preinstalled on the `macos` images, so `fastlane gym` runs without a setup step —
+use `bundle exec fastlane gym` only if your repository has a Gemfile pinning it.
 
 `release-testing` is Apple's current name for ad-hoc distribution. gym copies this value
 straight into the ExportOptions plist's `method` key, where Apple deprecated `ad-hoc` in
@@ -99,7 +102,7 @@ jobs:
 | `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
-| `channel` | no | — | A [channel](https://betadrop.app/channels/) slug to point at this build once it is live — e.g. `nightly`. The channel's link, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the channel first. A channel that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+. |
+| `channel` | no | — | A [channel](https://betadrop.app/channels/) slug to point at this build once it is live — e.g. `nightly`. The channel's link, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the channel first. A channel that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
 
 ## Outputs
@@ -126,6 +129,11 @@ jobs:
 If the build uploads but the channel could not be pointed at it, the step fails — a pipeline that
 asked for a channel must not go green when the channel did not move.
 
+`channel` needs [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) **0.3.0 or newer**.
+The step checks the CLI it installed before it uploads anything, and names the version it found if
+that version is too old — so a run either points the channel or tells you exactly why it cannot.
+Every other input works on any published version.
+
 ### A download button that follows the channel
 
 Wrap the channel link in the "Download from BetaDrop" badge and paste it in your README — one
@@ -139,10 +147,43 @@ the button installs and the README never changes.
 Copy the exact snippet (dark or light, HTML or Markdown) from the embed panel under any build's
 install link. Details and guidelines: <https://betadrop.app/download-button/>.
 
+### Pin the CLI for a reproducible pipeline
+
+`cli-version` defaults to `latest`, which means a green pipeline can change behaviour on a day you
+did not touch it. Pin it once you are past setup:
+
+```yaml
+- uses: betadrop-app/upload-action@v1
+  with:
+    file: "*.ipa"
+    token: ${{ secrets.BETADROP_TOKEN }}
+    cli-version: "0.2.13"
+```
+
+## Troubleshooting
+
+**`the installed @betadrop/cli … has no --channel flag`** — the version that resolved is older than
+0.3.0, which is where `channel` landed. Set `cli-version` to 0.3.0 or newer; if `latest` itself is
+older than that, the flag has not reached npm yet and the rest of the action still works without
+`channel`.
+
+**`No file matches '…'`** — the glob ran before the build wrote anything, or wrote somewhere else.
+Add a `run: ls -R` step before this one to see what the build actually produced. A pattern that
+resolves only to directories counts as no match.
+
+**`'…' matches N files`** — deliberate. Publishing an arbitrary one of several builds is worse than
+failing, so narrow the pattern until it names one.
+
+**`Publish did not end with an install URL`** — the CLI printed something after the link, which
+breaks the contract this action reads. Report it; the last line of the run log is the useful detail.
+
+**It downloads on the phone but will not open (iOS)** — see the note about UDIDs below.
+
 ## Notes
 
-- Works on `ubuntu`, `macos`, and `windows` runners (Node is preinstalled on all GitHub-hosted images).
+- Works on `ubuntu`, `macos`, and `windows` runners (Node is preinstalled on all GitHub-hosted images) — this repo's own [selftest](.github/workflows/selftest.yml) runs the shipped script on all three.
 - A glob matching **more than one** file fails the step rather than uploading an arbitrary build — narrow the pattern.
+- Pass `token` as a repository secret. A token pasted literally into a workflow is registered as a mask by the step, but it is still committed to your repository in clear.
 - Build links follow your account's retention settings; see [pricing](https://betadrop.app/pricing/).
 - An **ad-hoc iOS build uploaded from CI still only installs on registered devices**. If a tester reports "it downloads but won't open", their UDID was not in the provisioning profile when the IPA was signed. Send them the [UDID checker](https://betadrop.app/udid-checker/) — it reads the UDID off the iPhone itself, so they don't need a Mac or a cable — then add the device in the Apple Developer portal and re-sign.
 - This action is a thin wrapper over the same [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) you'd use locally, so CI behaves exactly like your machine.
