@@ -152,7 +152,13 @@ jobs:
             ); rc=$?
             [ "$expect" = ok ] && [ "$rc" -ne 0 ] && ok=0
             [ "$expect" = err ] && [ "$rc" -eq 0 ] && ok=0
-            if ! printf '%s\n%s\n' "$log" "$(cat out.txt)" | grep -qE "$pat"; then ok=0; fi
+            # Assembled in a file rather than piped into grep. `grep -q` closes the pipe on its
+            # first match, the writer takes SIGPIPE, and under `pipefail` that 141 is the status
+            # the pipeline reports — so a case that matched reads as a case that failed. It is
+            # timing-dependent, so it passes until the one run where it does not.
+            printf '%s\n' "$log" > check.txt
+            cat out.txt >> check.txt
+            if ! grep -qE "$pat" check.txt; then ok=0; fi
             if [ "$ok" -eq 1 ]; then
               echo "  ok    $label"; pass=$((pass + 1))
             else
