@@ -53,30 +53,35 @@ jobs:
 
       - name: "No workflow expressions inside a run: block"
         shell: bash
-        # The template engine substitutes every ${{ }} it finds in a `run:` block *before* bash
-        # sees the script - inside comments too, since a YAML block scalar has no comments as far
-        # as the engine is concerned. Two ways that bites:
+        # The template engine substitutes every workflow expression it finds in a `run:` block
+        # *before* bash sees the script - inside comments too, since a YAML block scalar has no
+        # comments as far as the engine is concerned. Two ways that bites:
         #
         #   * `secrets` is not a context a composite action can read, so a single mention of one
-        #     anywhere in a run: block makes the whole action.yml fail to load. Nothing in this
-        #     repo's own CI notices, because the case suite runs the extracted script rather than
-        #     the action - v1.1.1 shipped exactly that and was broken for every consumer.
+        #     anywhere in a run: block makes the whole action.yml fail to load. Nothing else in
+        #     this repo's CI notices, because the case suite runs the extracted script rather
+        #     than the action - v1.1.1 shipped exactly that and was broken for every consumer.
         #   * an input spliced into the script is the composite-action injection footgun this
         #     action deliberately avoids by passing inputs through env.
         #
-        # The wiring job catches the fatal half by calling the action. This catches both halves,
-        # before anything runs, and says which line.
+        # The wiring job catches the fatal half by calling the action. This catches both halves
+        # before anything runs, and names the step and line.
+        #
+        # The opening delimiter is assembled from pieces rather than written out, because this
+        # file is a workflow too: spelling it literally here makes *this* file fail to load, which
+        # is how the first version of this guard was discovered.
         run: |
           set -euo pipefail
           ruby -ryaml -e '
+            open_expr = "$" + "{" + "{"
             bad = YAML.load_file("action.yml")["runs"]["steps"].flat_map do |st|
               (st["run"] || "").lines.each_with_index
-                .select { |line, _| line.include?("${{") }
+                .select { |line, _| line.include?(open_expr) }
                 .map { |line, i| "  #{st["id"] || st["name"]} line #{i + 1}: #{line.strip}" }
             end
             unless bad.empty?
               warn "A run: block contains a workflow expression. The template engine evaluates it"
-              warn "before bash runs - reword the line so the literal ${{ never appears:"
+              warn "before bash runs - reword the line so the literal #{open_expr} never appears:"
               warn bad
               exit 1
             end
@@ -413,6 +418,9 @@ jobs:
         env:
           INSTALL_URL: ${{ steps.act.outputs.install-url }}
           CHANNEL_URL: ${{ steps.act.outputs.channel-url }}
+          # Through env for the same reason the action passes its inputs that way, and so this
+          # file keeps the property the guard above enforces for action.yml.
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           fail=0
@@ -423,7 +431,7 @@ jobs:
           [ -z "$CHANNEL_URL" ] || { echo "channel-url should be empty, got '$CHANNEL_URL'"; fail=1; }
           # comment-on-pr: true on a push event has no PR to comment on, so the step must run and
           # skip rather than call the API. On a pull_request run it posts through the stubbed gh.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             grep -q 'issues/.*/comments' "$RUNNER_TEMP/gh-calls" \
               || { echo "comment-on-pr did not reach gh:"; cat "$RUNNER_TEMP/gh-calls"; fail=1; }
           else
