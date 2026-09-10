@@ -88,6 +88,33 @@ jobs:
           '
           echo "No run: block contains a workflow expression."
 
+      - name: The README's rendered examples still match what the action writes
+        shell: bash
+        # The README does not picture the run-summary panel, it renders the same Markdown the
+        # action emits — which is only honest for as long as the two agree. Reword the summary in
+        # action.yml and the README silently becomes a claim about a panel that no longer exists,
+        # which is the exact failure this repo spent a day fixing everywhere else.
+        run: |
+          set -euo pipefail
+          missing=0
+          check() {
+            if grep -qF -- "$1" README.md; then
+              echo "  ok    README carries: $1"
+            else
+              echo "  MISSING from README.md: $1"
+              missing=1
+            fi
+          }
+          check '### Build published to BetaDrop'
+          check 'Open it on a phone to install over the air — no TestFlight, no tester accounts.'
+          check '<img src="https://betadrop.app/logo.png" width="28" align="left" alt="BetaDrop">'
+          check '### Beta build ready to install'
+          check 'published by <a href="https://betadrop.app">BetaDrop</a>'
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::The README renders these as the panel the action writes. action.yml no longer writes one of them - update the README block to match, or the page is describing something that does not happen."
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
           name: publish-script

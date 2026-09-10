@@ -12,6 +12,31 @@ The install link lands in three places, so nobody has to go looking for it: a st
 the rest of your workflow, the **run summary** page where the whole team can see it, and
 optionally a **comment on the pull request** that updates itself on every push.
 
+### What lands on the run page
+
+Every green build ends with this on the workflow run's own summary — no step to add, and the whole
+team sees it, not just whoever triggered the build. It is rendered below by the same Markdown the
+action writes, so this is the panel itself rather than a picture of one (the link is an example):
+
+> <img src="https://betadrop.app/logo.png" width="28" align="left" alt="BetaDrop">
+>
+> ### Build published to BetaDrop
+>
+> **[Install on a device](https://betadrop.app/install/?i=EXAMPLE)** · `https://betadrop.app/install/?i=EXAMPLE`
+>
+> Open it on a phone to install over the air — no TestFlight, no tester accounts.
+
+With `comment-on-pr: true`, the same link also arrives on the pull request, and every later push
+edits that comment instead of adding another:
+
+> ### Beta build ready to install
+>
+> **[Install on a device](https://betadrop.app/install/?i=EXAMPLE)**
+>
+> `https://betadrop.app/install/?i=EXAMPLE`
+>
+> <sub>Open it on a phone to install over the air. Built from `0123456` · published by <a href="https://betadrop.app">BetaDrop</a></sub>
+
 ## Usage
 
 ```yaml
