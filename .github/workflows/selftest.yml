@@ -28,7 +28,7 @@ jobs:
   extract:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract the publish script from action.yml
         shell: bash
@@ -48,7 +48,7 @@ jobs:
           bash -n publish.sh
           echo "Extracted $(wc -l < publish.sh) lines"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: publish-script
           path: publish.sh
@@ -65,13 +65,18 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: publish-script
 
       - name: Run the case suite
         shell: bash
         run: |
+          # GitHub runs `shell: bash` as `bash --noprofile --norc -e -o pipefail`. This harness
+          # runs commands that are *supposed* to fail — that is what a negative case is — and
+          # inspects their exit codes itself, so errexit is turned off here explicitly. The step's
+          # result comes from the tally on the last line instead.
+          set +e
           set -uo pipefail
 
           mkdir -p stub
