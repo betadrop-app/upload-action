@@ -28,7 +28,7 @@ jobs:
   extract:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Extract the publish script from action.yml
         shell: bash
@@ -41,17 +41,22 @@ jobs:
           set -euo pipefail
           ruby -ryaml -e '
             a = YAML.load_file("action.yml")
-            pub = a["runs"]["steps"].find { |s| s["id"] == "publish" }
-            abort("no step with id: publish in action.yml") if pub.nil?
-            File.write("publish.sh", pub["run"])
+            { "publish" => "publish.sh", "comment" => "comment.sh" }.each do |id, out|
+              step = a["runs"]["steps"].find { |s| s["id"] == id }
+              abort("no step with id: #{id} in action.yml") if step.nil?
+              File.write(out, step["run"])
+            end
           '
           bash -n publish.sh
-          echo "Extracted $(wc -l < publish.sh) lines"
+          bash -n comment.sh
+          echo "Extracted $(wc -l < publish.sh) + $(wc -l < comment.sh) lines"
 
       - uses: actions/upload-artifact@v7
         with:
           name: publish-script
-          path: publish.sh
+          path: |
+            publish.sh
+            comment.sh
 
   cases:
     needs: extract
@@ -252,6 +257,146 @@ jobs:
             fail=$((fail + 1))
           fi
 
+          echo "── the pull-request comment ──"
+          # `gh` is stubbed the same way the CLI is, and the stub records its argv — so these
+          # assert the API calls the step actually makes, not merely that it exited 0. The one
+          # that matters is edit-not-append: a comment per push is what gets the input turned
+          # back off.
+          cat > stub/gh <<'STUB'
+          #!/bin/bash
+          echo "gh $*" >> "$CALLS"
+          case "${GH_MODE:-none}" in
+            none)   exit 0 ;;
+            exists) [[ "$*" == *--paginate* ]] && echo "4242"; exit 0 ;;
+            denied) exit 1 ;;
+          esac
+          STUB
+          chmod +x stub/gh
+
+          comment_case() { # <label> <PR_NUMBER> <CHANNEL_URL> <GH_MODE> <expected log> <expected gh call>
+            local label="$1" pr="$2" chan="$3" mode="$4" logpat="$5" callpat="$6"
+            export CALLS="$PWD/gh-calls"; : > "$CALLS"
+            local log rc ok=1
+            log=$(
+              export PATH="$PWD/stub:$PATH" RUNNER_TEMP="$PWD" GH_MODE="$mode"
+              env PR_NUMBER="$pr" INSTALL_URL='https://betadrop.app/install/?i=stub123' \
+                  CHANNEL_URL="$chan" INPUT_CHANNEL="${chan:+nightly}" \
+                  REPO=acme/app SHA=0123456789abcdef GH_TOKEN=stub \
+                  bash comment.sh 2>&1
+            ); rc=$?
+            # A comment is never worth failing a published build over, so every path exits 0.
+            [ "$rc" -ne 0 ] && ok=0
+            printf '%s\n' "$log" > check.txt
+            grep -qE "$logpat" check.txt || ok=0
+            if [ -n "$callpat" ]; then grep -qE "$callpat" "$CALLS" || ok=0; fi
+            if [ -n "$callpat" ] || [ "$mode" = none ]; then
+              # exactly one write call, ever: one POST or one PATCH, never both
+              [ "$(grep -cE '\-X (POST|PATCH)' "$CALLS")" -le 1 ] || ok=0
+            fi
+            if [ "$ok" -eq 1 ]; then echo "  ok    $label"; pass=$((pass + 1))
+            else
+              echo "  FAIL  $label — exit $rc, wanted log /$logpat/ and call /$callpat/"
+              sed 's/^/        | /' check.txt; sed 's/^/        gh| /' "$CALLS"
+              fail=$((fail + 1))
+            fi
+          }
+
+          comment_case "an event with no PR skips, it does not fail" \
+            "" "" none '::notice::.*no pull request' ''
+          comment_case "the first push creates one comment" \
+            7 "" none 'Commented the install link' 'issues/7/comments -X POST'
+          comment_case "a later push edits that comment instead of adding one" \
+            7 "" exists 'Updated the existing comment' 'issues/comments/4242 -X PATCH'
+          comment_case "a channel link rides along when there is one" \
+            7 'https://betadrop.app/install/nightly' none 'Commented the install link' 'issues/7/comments -X POST'
+          comment_case "a token that cannot write warns, it does not fail the build" \
+            7 "" denied '::warning::.*pull-requests: write' ''
+
+          # The body is what a reviewer sees, so assert its shape rather than just its existence.
+          if grep -q '^<!-- betadrop-upload-action -->$' betadrop-comment.md \
+             && grep -q 'install/?i=stub123' betadrop-comment.md \
+             && grep -q 'Built from `0123456`' betadrop-comment.md; then
+            echo "  ok    the comment body carries the marker, the link and the commit"
+            pass=$((pass + 1))
+          else
+            echo "  FAIL  the comment body carries the marker, the link and the commit"
+            sed 's/^/        | /' betadrop-comment.md; fail=$((fail + 1))
+          fi
+
           echo
           echo "$pass passed, $fail failed"
           [ "$fail" -eq 0 ]
+
+  # The case suite runs the publish and comment scripts in isolation, which is what makes them
+  # cheap to test — but it cannot see action.yml's own plumbing: whether an input actually reaches
+  # the env var the script reads, whether `default:` fills in, whether the step `if:` fires, or
+  # whether an output declared at the top of the file makes it back to the caller. A wiring
+  # mistake there is invisible to every case above and breaks every consumer. So this job calls
+  # the action the way a user does.
+  wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Put a stub CLI (and a stub gh) ahead of the real ones on PATH
+        shell: bash
+        # $GITHUB_PATH prepends, so these shadow whatever `npm install -g` puts down — the action
+        # still runs its real install step, which is the only thing that exercises that path at all.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          cat > "$RUNNER_TEMP/bin/betadrop" <<'STUB'
+          #!/bin/bash
+          case "$1" in --version) echo "0.3.0-stub"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then echo "  --channel <slug>"; exit 0; fi
+          # Echo the argv so the assertions below can prove the inputs arrived as flags.
+          echo "argv: $*" >&2
+          echo "https://betadrop.app/install/?i=wired42"
+          STUB
+          cat > "$RUNNER_TEMP/bin/gh" <<'STUB'
+          #!/bin/bash
+          echo "gh $*" >> "$RUNNER_TEMP/gh-calls"
+          exit 0
+          STUB
+          chmod +x "$RUNNER_TEMP/bin/betadrop" "$RUNNER_TEMP/bin/gh"
+          : > "$RUNNER_TEMP/gh-calls"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Build a file for it to publish
+        shell: bash
+        run: mkdir -p wired && touch wired/app-release.apk
+
+      - name: Call the action exactly as a consumer would
+        id: act
+        uses: ./
+        with:
+          file: wired/*.apk
+          token: bd_live_not_a_real_token
+          name: Wiring Test
+          notes: "a note with spaces"
+          comment-on-pr: true
+
+      - name: The declared outputs came back, and the inputs arrived as flags
+        shell: bash
+        env:
+          INSTALL_URL: ${{ steps.act.outputs.install-url }}
+          CHANNEL_URL: ${{ steps.act.outputs.channel-url }}
+        run: |
+          set -euo pipefail
+          fail=0
+          [ "$INSTALL_URL" = "https://betadrop.app/install/?i=wired42" ] \
+            || { echo "install-url did not reach the caller: '$INSTALL_URL'"; fail=1; }
+          # Declared, optional, and not requested: it must come back empty rather than unset or
+          # carrying the install URL.
+          [ -z "$CHANNEL_URL" ] || { echo "channel-url should be empty, got '$CHANNEL_URL'"; fail=1; }
+          # comment-on-pr: true on a push event has no PR to comment on, so the step must run and
+          # skip rather than call the API. On a pull_request run it posts through the stubbed gh.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            grep -q 'issues/.*/comments' "$RUNNER_TEMP/gh-calls" \
+              || { echo "comment-on-pr did not reach gh:"; cat "$RUNNER_TEMP/gh-calls"; fail=1; }
+          else
+            [ ! -s "$RUNNER_TEMP/gh-calls" ] \
+              || { echo "no PR on this event, but gh was called:"; cat "$RUNNER_TEMP/gh-calls"; fail=1; }
+          fi
+          [ "$fail" -eq 0 ] && echo "wiring ok: outputs, defaults and the comment step's if: all behave"
+          exit "$fail"

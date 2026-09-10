@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Something wrong with a build, an install page, or your account
+    url: https://betadrop.app/support/
+    about: This repository only covers the GitHub Action. Anything about the service itself is faster through support.
+  - name: Ask how to wire this into a pipeline
+    url: https://github.com/betadrop-app/upload-action/discussions
+    about: Workflow questions, fastlane and Gradle setups, and anything that is not a defect.

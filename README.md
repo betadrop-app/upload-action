@@ -8,7 +8,9 @@
 
 Upload an iOS `.ipa` or Android `.apk` from your CI pipeline to [BetaDrop](https://betadrop.app) and get an instant over-the-air install link — no TestFlight review wait, no Play track, no tester accounts. Testers open the link on their phone and install from the browser.
 
-The install link is exposed as a step output and added to the workflow run's summary page, so every green build ends with a tester-ready link.
+The install link lands in three places, so nobody has to go looking for it: a step **output** for
+the rest of your workflow, the **run summary** page where the whole team can see it, and
+optionally a **comment on the pull request** that updates itself on every push.
 
 ## Usage
 
@@ -31,7 +33,7 @@ jobs:
   beta:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the .ipa
         run: fastlane gym --export_method release-testing
       - name: Publish to BetaDrop
@@ -59,9 +61,9 @@ jobs:
   beta:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with: { java-version: "17", distribution: "temurin" }
       - name: Build release APK
         run: ./gradlew assembleRelease
@@ -73,7 +75,36 @@ jobs:
           notes: ${{ github.event.head_commit.message }}
 ```
 
-### Post the link on a pull request
+### Post the link on the pull request
+
+Set `comment-on-pr` and the reviewer gets the link without opening Actions:
+
+```yaml
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # required for the comment
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./gradlew assembleRelease
+      - uses: betadrop-app/upload-action@v1
+        with:
+          file: app/build/outputs/apk/release/*.apk
+          token: ${{ secrets.BETADROP_TOKEN }}
+          comment-on-pr: true
+```
+
+Every later push to the branch **edits that same comment** rather than adding another, so a
+twenty-commit PR ends with one comment holding the current build — not twenty holding stale ones.
+
+If the comment cannot be posted (usually a missing `pull-requests: write`), the step says so as a
+warning and the run stays green: the build published, and the link is still an output and still on
+the run summary. On an event with no pull request — a push to `main`, a manual dispatch — the
+comment is skipped silently.
+
+Prefer to build the comment yourself? The link is a normal step output:
 
 ```yaml
 - name: Publish to BetaDrop
@@ -83,15 +114,7 @@ jobs:
     file: "*.apk"
     token: ${{ secrets.BETADROP_TOKEN }}
 
-- name: Comment the install link
-  uses: actions/github-script@v7
-  with:
-    script: |
-      github.rest.issues.createComment({
-        ...context.repo,
-        issue_number: context.issue.number,
-        body: `📲 Beta build ready: ${{ steps.betadrop.outputs.install-url }}`,
-      })
+- run: echo "Install at ${{ steps.betadrop.outputs.install-url }}"
 ```
 
 ## Inputs
@@ -103,6 +126,8 @@ jobs:
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
 | `channel` | no | — | A [channel](https://betadrop.app/channels/) slug to point at this build once it is live — e.g. `nightly`. The channel's link, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the channel first. A channel that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
+| `comment-on-pr` | no | `false` | Post the install link as a comment on the pull request, editing that same comment on later pushes. Needs `pull-requests: write`. Skipped on events with no PR. |
+| `github-token` | no | `${{ github.token }}` | Token used for that comment. Override only if it should come from another account. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
 
 ## Outputs
@@ -166,6 +191,10 @@ did not touch it. Pin it once you are past setup:
 0.3.0, which is where `channel` landed. Set `cli-version` to 0.3.0 or newer; if `latest` itself is
 older than that, the flag has not reached npm yet and the rest of the action still works without
 `channel`.
+
+**The PR comment never appears** — check the run log for the warning. The usual cause is the job
+lacking `permissions: pull-requests: write`; the other is an event with no pull request, which is
+reported as a notice. Forked-PR runs get a read-only token by default and cannot comment at all.
 
 **`No file matches '…'`** — the glob ran before the build wrote anything, or wrote somewhere else.
 Add a `run: ls -R` step before this one to see what the build actually produced. A pattern that

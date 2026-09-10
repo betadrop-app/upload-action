@@ -1,0 +1,47 @@
+name: Bug report
+description: The action failed, or published something other than what you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most reports are resolved by the run log, so the two log fields below matter more than
+        the prose. Redact anything you need to — but please leave the error text itself intact.
+  - type: textarea
+    id: step
+    attributes:
+      label: The workflow step
+      description: The `uses:` block and its `with:` inputs. Replace the token with `***`.
+      render: yaml
+      placeholder: |
+        - uses: betadrop-app/upload-action@v1
+          with:
+            file: app/build/outputs/apk/release/*.apk
+            token: ***
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: What the run log said
+      description: The failing step's output, including the `::error::` or `::warning::` line.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Action version and runner
+      placeholder: "v1.2.0 on macos-latest"
+    validations:
+      required: true
+  - type: input
+    id: cli
+    attributes:
+      label: CLI version
+      description: The "Using @betadrop/cli …" line printed by the install step.
+      placeholder: "0.2.13"
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead

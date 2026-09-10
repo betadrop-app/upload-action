@@ -47,6 +47,19 @@ inputs:
       the version it resolved is too old.
     required: false
     default: ""
+  comment-on-pr:
+    description: >-
+      Post the install link as a comment on the pull request, and edit that same comment on every
+      later push instead of adding another. Needs permissions: pull-requests: write on the job.
+      Ignored on events that have no pull request.
+    required: false
+    default: "false"
+  github-token:
+    description: >-
+      Token used to post the pull-request comment. Defaults to the workflow's own GITHUB_TOKEN;
+      pass a different one only if you need the comment to come from another account.
+    required: false
+    default: ${{ github.token }}
   cli-version:
     description: "Version of @betadrop/cli to use. Pin this for reproducible pipelines."
     required: false
@@ -276,4 +289,75 @@ runs:
         # would become the step's exit status and fail every run that did not ask for a channel.
         if [ -n "$channel_url" ]; then
           echo "Channel link: $channel_url"
+        fi
+
+    # Opt-in, and a separate step so that a comment that cannot be posted never calls a published
+    # build a failed one. The link is already an output and already on the run summary by this
+    # point; the comment is the copy that reaches a reviewer who is not watching Actions.
+    - name: Comment the install link on the pull request
+      # Given an id for the same reason `publish` has one: the selftest finds the step by id and
+      # runs the shipped bytes, rather than testing a copy of them.
+      id: comment
+      if: ${{ inputs.comment-on-pr == 'true' && steps.publish.outputs.install-url != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        INSTALL_URL: ${{ steps.publish.outputs.install-url }}
+        CHANNEL_URL: ${{ steps.publish.outputs.channel-url }}
+        INPUT_CHANNEL: ${{ inputs.channel }}
+        REPO: ${{ github.repository }}
+        SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        set -euo pipefail
+
+        # A workflow that runs on both `push` and `pull_request` reaches this step on the push
+        # too. That is not a misconfiguration, so it is a notice rather than a failure.
+        SHA_SHORT="${SHA:-}"; SHA_SHORT="${SHA_SHORT:0:7}"
+
+        if [ -z "${PR_NUMBER:-}" ]; then
+          echo "::notice::comment-on-pr is set, but this event has no pull request — skipping the comment. The install link is still available as the install-url output."
+          exit 0
+        fi
+
+        # The marker is what makes this an edit rather than a new comment on every push. It is a
+        # fixed literal — inlined into the jq below, never built from an input — and it is an HTML
+        # comment, so it is invisible in the rendered thread.
+        marker="<!-- betadrop-upload-action -->"
+
+        {
+          echo "$marker"
+          echo "### Beta build ready to install"
+          echo ""
+          echo "**[Install on a device]($INSTALL_URL)**"
+          echo ""
+          echo "\`$INSTALL_URL\`"
+          if [ -n "${CHANNEL_URL:-}" ]; then
+            echo ""
+            echo "Channel \`${INPUT_CHANNEL:-}\` serves this build too — **[$CHANNEL_URL]($CHANNEL_URL)** stays valid as later builds land."
+          fi
+          echo ""
+          echo "<sub>Open it on a phone to install over the air. Built from \`${SHA_SHORT}\` · published by <a href=\"https://betadrop.app\">BetaDrop</a></sub>"
+        } > "$RUNNER_TEMP/betadrop-comment.md"
+
+        # `|| true` around the read: a token without pull-requests: read cannot list comments, and
+        # that must land on the actionable message below rather than on a bare jq failure.
+        existing="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+          --jq 'map(select(.body | contains("<!-- betadrop-upload-action -->"))) | .[0].id // empty' 2>/dev/null || true)"
+
+        # A failed comment is a warning, never a failure. The build published; turning that run red
+        # would punish a permissions gap with a lost build, and the two lines that fix it are named
+        # here instead.
+        if [ -n "$existing" ]; then
+          if gh api "repos/$REPO/issues/comments/$existing" -X PATCH -F body=@"$RUNNER_TEMP/betadrop-comment.md" >/dev/null; then
+            echo "Updated the existing comment on PR #$PR_NUMBER."
+          else
+            echo "::warning::Could not update the install-link comment on PR #$PR_NUMBER. The build published fine — see the install-url output. If this is a permissions error, add 'permissions: { pull-requests: write }' to the job."
+          fi
+        else
+          if gh api "repos/$REPO/issues/$PR_NUMBER/comments" -X POST -F body=@"$RUNNER_TEMP/betadrop-comment.md" >/dev/null; then
+            echo "Commented the install link on PR #$PR_NUMBER."
+          else
+            echo "::warning::Could not comment the install link on PR #$PR_NUMBER. The build published fine — see the install-url output. If this is a permissions error, add 'permissions: { pull-requests: write }' to the job."
+          fi
         fi

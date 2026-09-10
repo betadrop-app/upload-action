@@ -1,0 +1,12 @@
+# The action itself has no dependency manifest — it shells out to a CLI whose version is an input.
+# The only pinned dependencies in this repo are the actions the selftest uses, and they go stale
+# quietly: a major that starts running on a deprecated Node shows up as a warning annotation on a
+# green run, which is exactly the kind of thing nobody reads.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
