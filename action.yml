@@ -42,8 +42,9 @@ inputs:
       A channel slug to point at this build once it is live — e.g. nightly. The channel's link
       (and any "Download from BetaDrop" button embedded with it) then serves this build with
       nothing to click. Pro and Studio plans; claim the channel first at betadrop.app/channels.
-      A channel that cannot be used fails the step before anything is uploaded. Needs
-      @betadrop/cli 0.3.0 or newer.
+      A channel that cannot be used fails the step before anything is uploaded. Requires
+      @betadrop/cli 0.3.0 or newer — the step checks the installed CLI and says so by name if
+      the version it resolved is too old.
     required: false
     default: ""
   cli-version:
@@ -66,7 +67,21 @@ runs:
       shell: bash
       env:
         CLI_VERSION: ${{ inputs.cli-version }}
-      run: npm install -g "@betadrop/cli@${CLI_VERSION}"
+      run: |
+        set -euo pipefail
+        # `default:` only fills in an *omitted* input. `cli-version: ""` — which is what
+        # `cli-version: ${{ env.SOMETHING_UNSET }}` evaluates to — arrives as an empty string
+        # and would build the spec "@betadrop/cli@", so re-apply the default here.
+        version="${CLI_VERSION:-latest}"
+        npm install -g --no-fund --no-audit "@betadrop/cli@${version}"
+        # npm can install successfully into a global prefix that is not on PATH (it happens on
+        # self-hosted runners and on images with a user-level npm prefix). Catch it here, where
+        # the cause is still obvious, rather than as "betadrop: command not found" mid-publish.
+        if ! command -v betadrop >/dev/null 2>&1; then
+          echo "::error::@betadrop/cli installed but 'betadrop' is not on PATH. npm's global prefix is $(npm prefix -g 2>/dev/null || echo unknown) — add its bin directory to PATH before this step."
+          exit 1
+        fi
+        echo "Using @betadrop/cli $(betadrop --version 2>/dev/null || echo '(version unknown)')"
 
     - name: Publish build
       id: publish
@@ -80,8 +95,61 @@ runs:
         INPUT_NAME: ${{ inputs.name }}
         INPUT_NOTES: ${{ inputs.notes }}
         INPUT_CHANNEL: ${{ inputs.channel }}
+        # Carried into this step so the diagnostics below can name the version that was actually
+        # requested. Without it every "your CLI is too old" message read "cli-version: latest",
+        # which is exactly the wrong advice for someone who pinned an old one.
+        CLI_VERSION: ${{ inputs.cli-version }}
       run: |
         set -euo pipefail
+
+        # A token passed as `${{ secrets.X }}` is masked by the runner already. One pasted
+        # literally — or read out of a file by a previous step — is not, and would print in
+        # clear if any command here ever echoed it. Registering the mask costs one line.
+        if [ -n "${BETADROP_TOKEN:-}" ]; then
+          echo "::add-mask::$BETADROP_TOKEN"
+        else
+          echo "::error::No token supplied. Create one at betadrop.app under Settings → Developer → API tokens and pass it as token: \${{ secrets.BETADROP_TOKEN }}."
+          exit 1
+        fi
+
+        # A channel slug is [a-z0-9._-] by construction. Validating it here fails a typo in the
+        # workflow before an upload rather than after one, and — because the slug is echoed into
+        # the job summary further down as Markdown — it also keeps a value like a backtick or an
+        # <img> tag out of a page rendered on github.com.
+        if [ -n "$INPUT_CHANNEL" ]; then
+          case "$INPUT_CHANNEL" in
+            *[!a-zA-Z0-9._-]*)
+              echo "::error::channel '$INPUT_CHANNEL' is not a valid slug — letters, digits, dots, dashes and underscores only."
+              exit 1
+              ;;
+          esac
+
+          # `--channel` landed in @betadrop/cli 0.3.0. Older CLIs reject it with commander's
+          # "unknown option '--channel'", which tells the reader nothing about which version they
+          # have or which one they need — and `cli-version: latest` resolves to whatever npm's
+          # latest tag currently points at, which may still predate the flag. Ask the CLI what it
+          # supports and fail with the two facts that actually resolve this.
+          #
+          # Captured rather than piped into grep: `grep -q` closes the pipe on its first match,
+          # and under `pipefail` that SIGPIPE would be read as "the flag is missing".
+          cli_help="$(betadrop publish --help 2>&1 || true)"
+          case "$cli_help" in
+            *--channel*) ;;
+            *)
+              echo "::error::channel was set, but the installed @betadrop/cli ($(betadrop --version 2>/dev/null || echo 'version unknown')) has no --channel flag — it needs 0.3.0 or newer. Requested cli-version: ${CLI_VERSION:-latest}."
+              exit 1
+              ;;
+          esac
+        fi
+
+        # A path arriving from a YAML block scalar or from `${{ steps.build.outputs.path }}`
+        # routinely carries a trailing newline. Unaddressed it becomes part of the pattern, the
+        # glob matches nothing, and the run reports a missing build that is sitting right there.
+        INPUT_FILE="$(printf '%s' "$INPUT_FILE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [ -z "$INPUT_FILE" ]; then
+          echo "::error::file is empty. Point it at the .ipa/.apk your build step produced."
+          exit 1
+        fi
 
         # Resolve the glob to exactly one file. Build outputs often carry hashed or versioned
         # names, so a literal-path-only input would push everyone into a find/ls preamble; but
@@ -101,9 +169,11 @@ runs:
         # nullglob drops a *pattern* that matches nothing, but a literal path is not a pattern
         # and survives even when the file is absent. Filter to what actually exists so a typo
         # lands on the "no file matches" error below rather than on a confusing upload failure.
+        # `-f`, not `-e`: a pattern that resolves to a directory (say `outputs/*`) is not a build,
+        # and letting it through only moves the failure to the upload.
         present=()
         for m in ${matches[@]+"${matches[@]}"}; do
-          [ -e "$m" ] && present+=( "$m" )
+          [ -f "$m" ] && present+=( "$m" )
         done
         matches=( ${present[@]+"${present[@]}"} )
 
@@ -127,19 +197,47 @@ runs:
         [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
         [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
         [ -n "$INPUT_CHANNEL" ] && args+=( --channel "$INPUT_CHANNEL" )
-        # The whole of stdout is captured, then split: the CLI's contract is that the install
-        # URL is the LAST line, and that with --channel the line above it is
-        # `channel-url=<link>`. A non-zero exit from the CLI — including "uploaded, but the
-        # channel did not move" — fails this step here, before any output is written.
-        out="$(betadrop "${args[@]}")"
+
+        # Captured *and* echoed. A plain `out="$(betadrop …)"` swallows stdout, and the CLI has
+        # one path where that loses something the user needs: a publish that uploaded fine but
+        # whose channel did not move prints the install URL and *then* exits non-zero. Swallowed,
+        # that run ends red with a live build at a link nobody can read. `tee` keeps the log
+        # honest; the file keeps the capture. PIPESTATUS is read here at the top level, because
+        # inside `$( … )` it would describe the assignment rather than the CLI.
+        # mktemp, not $RUNNER_TEMP: on a Windows runner RUNNER_TEMP is a backslashed Windows
+        # path (D:\a\_temp), which bash on that image does not reliably resolve.
+        log="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/betadrop-publish.$$.log")"
+        set +e
+        betadrop "${args[@]}" | tee "$log"
+        status=${PIPESTATUS[0]}
+        set -e
+        if [ "$status" -ne 0 ]; then
+          echo "::error::betadrop publish failed (exit $status). The CLI's own message is above."
+          exit "$status"
+        fi
+        out="$(cat "$log")"
+
+        # The CLI's contract is that the install URL is the LAST line of stdout, and that with
+        # --channel the line above it is `channel-url=<link>`.
         url="$(printf '%s\n' "$out" | tail -n 1)"
         channel_url="$(printf '%s\n' "$out" | grep -m1 '^channel-url=' | cut -d= -f2- || true)"
         if [ -z "$url" ]; then
-          echo "::error::Publish produced no install URL."
+          echo "::error::Publish produced no output, so there is no install URL to report."
           exit 1
         fi
+        # The "last line" contract is the CLI's to keep, and it keeps it by routing every warning
+        # to stderr. Verify anyway: the failure mode if it ever slips is silent and permanent —
+        # a warning published as this run's install-url, linked from the summary, and pasted into
+        # a PR comment by the next step.
+        case "$url" in
+          https://*) ;;
+          *)
+            echo "::error::Publish did not end with an install URL — the last line of output was: $url"
+            exit 1
+            ;;
+        esac
         if [ -n "$INPUT_CHANNEL" ] && [ -z "$channel_url" ]; then
-          echo "::error::A channel was requested but the CLI reported no channel link. Is @betadrop/cli 0.3.0 or newer installed? (cli-version: ${CLI_VERSION:-latest})"
+          echo "::error::A channel was requested but the CLI reported no channel link. Installed @betadrop/cli: $(betadrop --version 2>/dev/null || echo 'version unknown'); requested cli-version: ${CLI_VERSION:-latest}."
           exit 1
         fi
 

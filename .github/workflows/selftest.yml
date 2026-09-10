@@ -4,13 +4,28 @@
 # executed against a stub `betadrop` on PATH. An earlier version of this workflow re-implemented
 # the glob logic inline, which meant it tested a copy: it stayed green while the real script
 # mis-handled a path containing a space. Extracting keeps the test honest by construction.
+#
+# Two things this workflow learned the hard way, both encoded below:
+#
+#  * Every case exports the *complete* set of INPUT_* variables the action defines. The script
+#    runs under `set -u`, and a variable the action always supplies (because every input has a
+#    `default:`) but a test forgets is an unbound-variable abort. That is how `INPUT_CHANNEL`
+#    took main red for a week.
+#  * A failure case asserts the *message*, not just a non-zero exit. Asserting only "it failed"
+#    is what let that abort hide: the three negative cases kept passing while failing for a
+#    reason that had nothing to do with what they test.
 name: selftest
 on:
   push: { branches: [main] }
   pull_request:
 
+# Nothing here reads or writes the repository through the API; the token does not need to be
+# able to either.
+permissions:
+  contents: read
+
 jobs:
-  resolve-and-publish:
+  extract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,125 +34,213 @@ jobs:
         shell: bash
         # Ruby ships with a YAML parser in its stdlib and is preinstalled on the runner image,
         # so this needs no install step (python3 is present too, but PyYAML is not guaranteed).
+        # Extraction happens once, on ubuntu, and travels to the other runners as an artifact:
+        # every OS then tests the identical bytes, and the matrix carries no dependency on Ruby
+        # being present on the macOS and Windows images.
         run: |
           set -euo pipefail
           ruby -ryaml -e '
             a = YAML.load_file("action.yml")
             pub = a["runs"]["steps"].find { |s| s["id"] == "publish" }
             abort("no step with id: publish in action.yml") if pub.nil?
-            File.write("/tmp/publish.sh", pub["run"])
+            File.write("publish.sh", pub["run"])
           '
-          bash -n /tmp/publish.sh
-          echo "Extracted $(wc -l < /tmp/publish.sh) lines"
+          bash -n publish.sh
+          echo "Extracted $(wc -l < publish.sh) lines"
 
-      - name: Stub the CLI
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publish-script
+          path: publish.sh
+
+  cases:
+    needs: extract
+    # The README tells people this action works on all three hosted images. It says so because
+    # this matrix checks it, not because bash is assumed to behave the same everywhere — the
+    # glob resolution, the array handling and the temp-file path are exactly the places where
+    # Git Bash on Windows and bash 3.2 on macOS diverge from bash 5 on Ubuntu.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: publish-script
+
+      - name: Run the case suite
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p /tmp/stub
-          # Mimics the real --ci contract: the install URL is the LAST line of stdout, and other
-          # output may precede it. If the action ever goes back to capturing all of stdout, the
-          # "single line" assertion below fails.
-          cat > /tmp/stub/betadrop <<'EOS'
+          set -uo pipefail
+
+          mkdir -p stub
+
+          # Stubs stand in for @betadrop/cli at three points in its history, because the action
+          # has to behave sensibly against all of them: the version that supports --channel, the
+          # version npm's `latest` tag actually resolves to today (which does not), and a publish
+          # that prints its install URL and *then* fails because the channel did not move.
+          cat > cli_new <<'STUB'
           #!/bin/bash
-          echo "npm warn deprecated transitive-dep@1.0.0"
+          case "$1" in --version) echo "0.3.0"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then
+            echo "Usage: betadrop publish [options] <file>"
+            echo "  --channel <slug>  point a channel at this build"
+            exit 0
+          fi
+          # Mimics the real --ci contract: the install URL is the LAST line of stdout, warnings
+          # go to stderr, and `channel-url=` sits one line above the URL. If the action ever goes
+          # back to reading all of stdout, the single-line assertions below fail.
+          echo "npm warn deprecated transitive-dep@1.0.0" >&2
+          for a in "$@"; do
+            [ "$a" = "--channel" ] && echo "channel-url=https://betadrop.app/install/nightly"
+          done
           echo "https://betadrop.app/install/?i=stub123"
-          EOS
-          chmod +x /tmp/stub/betadrop
-          echo "/tmp/stub" >> "$GITHUB_PATH"
+          STUB
 
-      - name: A single match publishes and yields a one-line URL output
-        shell: bash
-        env:
-          INPUT_NAME: ""
-          INPUT_NOTES: "fix: a commit message with spaces"
-        run: |
-          set -euo pipefail
-          mkdir -p single && touch single/app-release.apk
-          export INPUT_FILE='single/*.apk'
-          export GITHUB_OUTPUT=/tmp/out.single GITHUB_STEP_SUMMARY=/tmp/sum.single
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
-          cat "$GITHUB_OUTPUT"
-          [ "$(wc -l < "$GITHUB_OUTPUT")" -eq 1 ] || { echo "output is not a single line"; exit 1; }
-          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
-          grep -q 'stub123' "$GITHUB_STEP_SUMMARY"
+          cat > cli_old <<'STUB'
+          #!/bin/bash
+          case "$1" in --version) echo "0.2.13"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then
+            echo "Usage: betadrop publish [options] <file>"
+            echo "  --ci  non-interactive mode for CI"
+            exit 0
+          fi
+          for a in "$@"; do
+            [ "$a" = "--channel" ] && { echo "error: unknown option '--channel'" >&2; exit 1; }
+          done
+          echo "https://betadrop.app/install/?i=stub123"
+          STUB
 
-      - name: A literal path containing a space resolves
-        shell: bash
-        env:
-          INPUT_NAME: ""
-          INPUT_NOTES: ""
-        run: |
-          set -euo pipefail
-          mkdir -p spaced && touch "spaced/My App.ipa"
-          export INPUT_FILE='spaced/My App.ipa'
-          export GITHUB_OUTPUT=/tmp/out.spaced GITHUB_STEP_SUMMARY=/tmp/sum.spaced
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
-          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
+          cat > cli_urlthenfail <<'STUB'
+          #!/bin/bash
+          case "$1" in --version) echo "0.3.0"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then echo "  --channel <slug>"; exit 0; fi
+          echo "https://betadrop.app/install/?i=stub123"
+          echo "Channel nightly was not updated: this plan does not include channels" >&2
+          exit 1
+          STUB
 
-      - name: A glob whose pattern contains a space resolves
-        shell: bash
-        env:
-          INPUT_NAME: ""
-          INPUT_NOTES: ""
-        run: |
-          set -euo pipefail
-          mkdir -p spaced2 && touch "spaced2/My App.ipa"
-          export INPUT_FILE='spaced2/My A*.ipa'
-          export GITHUB_OUTPUT=/tmp/out.spaced2 GITHUB_STEP_SUMMARY=/tmp/sum.spaced2
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
-          grep -qx 'install-url=https://betadrop.app/install/?i=stub123' "$GITHUB_OUTPUT"
+          cat > cli_trailing <<'STUB'
+          #!/bin/bash
+          case "$1" in --version) echo "0.3.0"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then echo "  --channel <slug>"; exit 0; fi
+          echo "https://betadrop.app/install/?i=stub123"
+          echo "warning: this build expires in 3 days"
+          STUB
 
-      - name: Zero matches fails with an actionable error
-        id: none
-        continue-on-error: true
-        shell: bash
-        env:
-          INPUT_FILE: "./no-such-dir/*.apk"
-          INPUT_NAME: ""
-          INPUT_NOTES: ""
-        run: |
-          set -euo pipefail
-          export GITHUB_OUTPUT=/tmp/out.none GITHUB_STEP_SUMMARY=/tmp/sum.none
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
+          pass=0; fail=0
 
-      - name: A literal path that does not exist also fails
-        id: absent
-        continue-on-error: true
-        shell: bash
-        env:
-          INPUT_FILE: "./no-such-dir/app.apk"
-          INPUT_NAME: ""
-          INPUT_NOTES: ""
-        run: |
-          set -euo pipefail
-          export GITHUB_OUTPUT=/tmp/out.absent GITHUB_STEP_SUMMARY=/tmp/sum.absent
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
+          # case <label> <stub> <ok|err> <extended regex the run must contain> [VAR=value ...]
+          #
+          # The regex is matched against the step log *and* the resulting $GITHUB_OUTPUT, so a
+          # positive case can assert what was published and a negative case can assert which
+          # error fired — never merely that something went wrong.
+          case_() {
+            local label="$1" stub="$2" expect="$3" pat="$4"; shift 4
+            cp "$stub" stub/betadrop; chmod +x stub/betadrop
+            : > out.txt; : > sum.txt
+            local log rc ok=1
+            log=$(
+              export PATH="$PWD/stub:$PATH" GITHUB_OUTPUT="$PWD/out.txt" GITHUB_STEP_SUMMARY="$PWD/sum.txt"
+              env "$@" bash publish.sh 2>&1
+            ); rc=$?
+            [ "$expect" = ok ] && [ "$rc" -ne 0 ] && ok=0
+            [ "$expect" = err ] && [ "$rc" -eq 0 ] && ok=0
+            if ! printf '%s\n%s\n' "$log" "$(cat out.txt)" | grep -qE "$pat"; then ok=0; fi
+            if [ "$ok" -eq 1 ]; then
+              echo "  ok    $label"; pass=$((pass + 1))
+            else
+              echo "  FAIL  $label — exit $rc, expected $expect, looking for /$pat/"
+              printf '%s\n' "$log" | sed 's/^/        | /'
+              printf '%s\n' "--- GITHUB_OUTPUT ---" | sed 's/^/        | /'
+              sed 's/^/        | /' out.txt
+              fail=$((fail + 1))
+            fi
+          }
 
-      - name: Multiple matches fails rather than picking one
-        id: many
-        continue-on-error: true
-        shell: bash
-        env:
-          INPUT_FILE: "multi/*.apk"
-          INPUT_NAME: ""
-          INPUT_NOTES: ""
-        run: |
-          set -euo pipefail
-          mkdir -p multi && touch multi/a.apk multi/b.apk
-          export GITHUB_OUTPUT=/tmp/out.many GITHUB_STEP_SUMMARY=/tmp/sum.many
-          : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
-          bash /tmp/publish.sh
+          mkdir -p single multi spaced spaced2 adir/sub
+          touch single/app-release.apk multi/a.apk multi/b.apk "spaced/My App.ipa" "spaced2/My App.ipa"
 
-      - name: Assert every failure case actually failed
-        shell: bash
-        run: |
-          set -euo pipefail
-          [ "${{ steps.none.outcome }}"   = "failure" ] || { echo "zero-match did not fail";     exit 1; }
-          [ "${{ steps.absent.outcome }}" = "failure" ] || { echo "absent path did not fail";    exit 1; }
-          [ "${{ steps.many.outcome }}"   = "failure" ] || { echo "multi-match did not fail";    exit 1; }
+          echo "── resolving the file ──"
+          case_ "a single glob match publishes" cli_new ok \
+            'install-url=https://betadrop\.app/install/\?i=stub123' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES='fix: a commit message with spaces' INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a literal path containing a space resolves" cli_new ok \
+            'install-url=https://' \
+            INPUT_FILE='spaced/My App.ipa' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a glob pattern containing a space resolves" cli_new ok \
+            'install-url=https://' \
+            INPUT_FILE='spaced2/My A*.ipa' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a trailing newline on the path is trimmed" cli_new ok \
+            'install-url=https://' \
+            INPUT_FILE='single/*.apk
+          ' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "zero matches fails with an actionable error" cli_new err \
+            'No file matches' \
+            INPUT_FILE='./no-such-dir/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a literal path that does not exist also fails" cli_new err \
+            'No file matches' \
+            INPUT_FILE='./no-such-dir/app.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "multiple matches fails rather than picking one" cli_new err \
+            'matches 2 files' \
+            INPUT_FILE='multi/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a directory is not a build" cli_new err \
+            'No file matches' \
+            INPUT_FILE='adir/*' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "an empty path is refused" cli_new err \
+            'file is empty' \
+            INPUT_FILE='   ' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+
+          echo "── the run with no channel, which is most runs ──"
+          case_ "an empty channel does not abort the step" cli_new ok \
+            'Install link: https://' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+
+          echo "── channel ──"
+          case_ "a channel publishes both links" cli_new ok \
+            'channel-url=https://betadrop\.app/install/nightly' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a CLI without --channel is named, not guessed at" cli_old err \
+            'has no --channel flag' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "that same CLI still publishes without a channel" cli_old ok \
+            'install-url=https://' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a slug that is not a slug fails before the upload" cli_new err \
+            'is not a valid slug' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL='night`ly<img src=x>' CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+
+          echo "── what the log keeps when things go wrong ──"
+          case_ "a failure after the URL still shows the URL" cli_urlthenfail err \
+            'install/\?i=stub123' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a non-URL last line is never published as the link" cli_trailing err \
+            'did not end with an install URL' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          case_ "a missing token is refused before anything runs" cli_new err \
+            'No token supplied' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=
+
+          echo "── the shape of what is written ──"
+          # $GITHUB_OUTPUT must stay one `key=value` per line: a multi-line value is both broken
+          # and a way to inject further outputs.
+          cp cli_new stub/betadrop; chmod +x stub/betadrop
+          : > out.txt; : > sum.txt
+          ( export PATH="$PWD/stub:$PATH" GITHUB_OUTPUT="$PWD/out.txt" GITHUB_STEP_SUMMARY="$PWD/sum.txt"
+            env INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub bash publish.sh ) > /dev/null
+          if [ "$(grep -c . out.txt)" -eq 2 ] \
+             && grep -qx 'install-url=https://betadrop.app/install/?i=stub123' out.txt \
+             && grep -qx 'channel-url=https://betadrop.app/install/nightly' out.txt \
+             && grep -q 'stub123' sum.txt \
+             && grep -q 'Channel `nightly`' sum.txt; then
+            echo "  ok    outputs and summary carry exactly the two links"; pass=$((pass + 1))
+          else
+            echo "  FAIL  outputs and summary carry exactly the two links"
+            sed 's/^/        | /' out.txt; sed 's/^/        | /' sum.txt
+            fail=$((fail + 1))
+          fi
+
+          echo
+          echo "$pass passed, $fail failed"
+          [ "$fail" -eq 0 ]
