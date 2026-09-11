@@ -64,7 +64,7 @@ edits that comment instead of adding another:
 | --- | --- |
 | **TestFlight external testing** | No Beta App Review between a green build and a tester's phone, and no TestFlight app or invite to accept. Still ad-hoc signing rules — see the UDID note under [Notes](#notes). |
 | **Play internal testing** | No Play Console upload step, no track, no tester list to keep in sync — you hand out a URL. |
-| **Diawi / similar OTA services** | Same idea, wired into CI with one step, plus channels, PR comments and a step output. |
+| **Diawi / similar OTA services** | Same idea, wired into CI with one step, plus standing links, PR comments and a step output. |
 | **Firebase App Distribution** | No Firebase project, no tester SDK, no invite acceptance — the link works in a plain mobile browser. |
 
 Both platforms, one step, one token.
@@ -182,7 +182,8 @@ Prefer to build the comment yourself? The link is a normal step output:
 | `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
-| `channel` | no | — | A [channel](https://betadrop.app/channels/) slug to point at this build once it is live — e.g. `nightly`. The channel's link, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the channel first. A channel that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
+| `standing-link` | no | — | A [standing link](https://betadrop.app/standing-links/) slug to point at this build once it is live — e.g. `acmebeta`. That one URL, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the name first. A name that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
+| `channel` | no | — | Deprecated alias for `standing-link` — the same feature under its previous name. Permanently accepted, so a workflow already pinning it keeps working. If both are set, `standing-link` wins. |
 | `comment-on-pr` | no | `false` | Post the install link as a comment on the pull request, editing that same comment on later pushes. Needs `pull-requests: write`. Skipped on events with no PR. |
 | `github-token` | no | `${{ github.token }}` | Token used for that comment. Override only if it should come from another account. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
@@ -192,12 +193,13 @@ Prefer to build the comment yourself? The link is a normal step output:
 | Output | Description |
 | --- | --- |
 | `install-url` | The OTA install link for the uploaded build. |
-| `channel-url` | The channel's stable install link when `channel` was set; empty otherwise. |
+| `standing-link-url` | The standing link's URL when `standing-link` (or `channel`) was set; empty otherwise. |
+| `channel-url` | Deprecated alias for `standing-link-url`. Same value, kept so existing workflows keep working. |
 
-### One link that follows every build
+### One link that never changes
 
-A new build means a new install link, which means re-sending it. A **channel** is a fixed link that
-always points at the latest build you published to it — hand it out once and stop re-sending:
+A new build means a new install link, which means re-sending it. A **standing link** is a fixed URL
+you re-point at each new build — hand it out once and stop re-sending:
 
 ```yaml
 - name: Publish to BetaDrop
@@ -206,27 +208,27 @@ always points at the latest build you published to it — hand it out once and s
   with:
     file: app/build/outputs/apk/release/*.apk
     token: ${{ secrets.BETADROP_TOKEN }}
-    channel: nightly
+    standing-link: acmebeta
 
-- run: echo "Testers keep using ${{ steps.betadrop.outputs.channel-url }}"
+- run: echo "Testers keep using ${{ steps.betadrop.outputs.standing-link-url }}"
 ```
 
-If the build uploads but the channel could not be pointed at it, the step fails — a pipeline that
-asked for a channel must not go green when the channel did not move.
+If the build uploads but the standing link could not be moved, the step fails — a pipeline that
+asked for one must not go green when it did not move.
 
-`channel` needs [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) **0.3.0 or newer**.
-The step checks the CLI it installed before it uploads anything, and names the version it found if
-that version is too old — so a run either points the channel or tells you exactly why it cannot.
-Every other input works on any published version.
+`standing-link` needs [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) **0.3.0 or
+newer**. The step asks the installed CLI which spelling it understands and uses that, so a pinned
+0.3.0 keeps working unchanged; if the version is older than either, the step names it rather than
+surfacing commander's noise. Every other input works on any published version.
 
-### A download button that follows the channel
+### A download button that follows the standing link
 
-Wrap the channel link in the "Download from BetaDrop" badge and paste it in your README — one
-Markdown image link, no script. With `channel:` set on the step above, every merge updates what
-the button installs and the README never changes.
+Wrap the standing link in the "Download from BetaDrop" badge and paste it in your README — one
+Markdown image link, no script. With `standing-link:` set on the step above, every merge updates
+what the button installs and the README never changes.
 
 ```markdown
-[![Download MyApp from BetaDrop](https://betadrop.app/badge/download-dark.svg)](https://betadrop.app/install/nightly?ref=badge)
+[![Download MyApp from BetaDrop](https://betadrop.app/badge/download-dark.svg)](https://betadrop.app/install/acmebeta?ref=badge)
 ```
 
 Copy the exact snippet (dark or light, HTML or Markdown) from the embed panel under any build's
@@ -247,8 +249,9 @@ did not touch it. Pin it once you are past setup:
 
 ## Troubleshooting
 
-**`the installed @betadrop/cli … has no --channel flag`** — the version that resolved is older than
-0.3.0, which is where `channel` landed. Set `cli-version` to 0.3.0 or newer.
+**`the installed @betadrop/cli … supports neither --standing-link nor --channel`** — the version
+that resolved is older than 0.3.0, which is where the flag landed. Set `cli-version` to 0.3.0 or
+newer.
 
 **The PR comment never appears** — check the run log for the warning. The usual cause is the job
 lacking `permissions: pull-requests: write`; the other is an event with no pull request, which is

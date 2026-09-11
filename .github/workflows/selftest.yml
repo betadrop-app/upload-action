@@ -172,6 +172,24 @@ jobs:
           echo "https://betadrop.app/install/?i=stub123"
           STUB
 
+          # The CLI from 0.3.2 on, which renamed the flag to --standing-link and keeps --channel
+          # as a hidden alias. The action must PREFER the new spelling against this one, so the
+          # stub only emits the link line when it is called with --standing-link.
+          cat > cli_newest <<'STUB'
+          #!/bin/bash
+          case "$1" in --version) echo "0.3.2"; exit 0;; esac
+          if [ "$1" = "publish" ] && [ "$2" = "--help" ]; then
+            echo "Usage: betadrop publish [options] <file>"
+            echo "  --standing-link <slug>  point a standing link at this build"
+            exit 0
+          fi
+          for a in "$@"; do
+            [ "$a" = "--channel" ] && { echo "stub: action used the OLD flag against a new CLI" >&2; exit 1; }
+            [ "$a" = "--standing-link" ] && echo "channel-url=https://betadrop.app/install/nightly"
+          done
+          echo "https://betadrop.app/install/?i=stub123"
+          STUB
+
           cat > cli_old <<'STUB'
           #!/bin/bash
           case "$1" in --version) echo "0.2.13"; exit 0;; esac
@@ -245,62 +263,83 @@ jobs:
           echo "── resolving the file ──"
           case_ "a single glob match publishes" cli_new ok \
             'install-url=https://betadrop\.app/install/\?i=stub123' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES='fix: a commit message with spaces' INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES='fix: a commit message with spaces' INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a literal path containing a space resolves" cli_new ok \
             'install-url=https://' \
-            INPUT_FILE='spaced/My App.ipa' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='spaced/My App.ipa' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a glob pattern containing a space resolves" cli_new ok \
             'install-url=https://' \
-            INPUT_FILE='spaced2/My A*.ipa' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='spaced2/My A*.ipa' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a trailing newline on the path is trimmed" cli_new ok \
             'install-url=https://' \
             INPUT_FILE='single/*.apk
-          ' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          ' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "zero matches fails with an actionable error" cli_new err \
             'No file matches' \
-            INPUT_FILE='./no-such-dir/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='./no-such-dir/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a literal path that does not exist also fails" cli_new err \
             'No file matches' \
-            INPUT_FILE='./no-such-dir/app.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='./no-such-dir/app.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "multiple matches fails rather than picking one" cli_new err \
             'matches 2 files' \
-            INPUT_FILE='multi/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='multi/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a directory is not a build" cli_new err \
             'No file matches' \
-            INPUT_FILE='adir/*' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='adir/*' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "an empty path is refused" cli_new err \
             'file is empty' \
-            INPUT_FILE='   ' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='   ' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
 
           echo "── the run with no channel, which is most runs ──"
           case_ "an empty channel does not abort the step" cli_new ok \
             'Install link: https://' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
 
           echo "── channel ──"
           case_ "a channel publishes both links" cli_new ok \
             'channel-url=https://betadrop\.app/install/nightly' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a CLI without --channel is named, not guessed at" cli_old err \
-            'has no --channel flag' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            'supports neither --standing-link nor --channel' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "that same CLI still publishes without a channel" cli_old ok \
             'install-url=https://' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a slug that is not a slug fails before the upload" cli_new err \
             'is not a valid slug' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL='night`ly<img src=x>' CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL='night`ly<img src=x>' CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+
+          echo "── the standing-link rename ──"
+          # The new input spelling reaches the CLI. Asserted against cli_new, which only knows
+          # --channel: the action must translate rather than pass the input through verbatim.
+          case_ "standing-link input works against a pre-rename CLI" cli_new ok \
+            'channel-url=https://betadrop\.app/install/nightly' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK=acmebeta INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          # And against a CLI that has the new flag, the action must use the NEW one — cli_newest
+          # exits non-zero if it is handed --channel.
+          case_ "a post-rename CLI is given the new flag" cli_newest ok \
+            'channel-url=https://betadrop\.app/install/nightly' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK=acmebeta INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          # The deprecated input keeps working, forever. This is the promise the rename makes.
+          case_ "the deprecated channel input still publishes" cli_new ok \
+            'channel-url=https://betadrop\.app/install/nightly' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+          # Both set: standing-link wins. The slug validator rejects the '<' in the channel value,
+          # so this case passing at all proves the channel input was never read.
+          case_ "standing-link wins when both inputs are set" cli_new ok \
+            'channel-url=https://betadrop\.app/install/nightly' \
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK=acmebeta INPUT_CHANNEL='bad<slug>' CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
 
           echo "── what the log keeps when things go wrong ──"
           case_ "a failure after the URL still shows the URL" cli_urlthenfail err \
             'install/\?i=stub123' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a non-URL last line is never published as the link" cli_trailing err \
             'did not end with an install URL' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           case_ "a missing token is refused before anything runs" cli_new err \
             'No token supplied' \
-            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=
+            INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= CLI_VERSION=latest BETADROP_TOKEN=
 
           echo "── the shape of what is written ──"
           # $GITHUB_OUTPUT must stay one `key=value` per line: a multi-line value is both broken
@@ -308,12 +347,12 @@ jobs:
           cp cli_new stub/betadrop; chmod +x stub/betadrop
           : > out.txt; : > sum.txt
           ( export PATH="$PWD/stub:$PATH" GITHUB_OUTPUT="$PWD/out.txt" GITHUB_STEP_SUMMARY="$PWD/sum.txt"
-            env INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub bash publish.sh ) > /dev/null
+            env INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL=nightly CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub bash publish.sh ) > /dev/null
           if [ "$(grep -c . out.txt)" -eq 2 ] \
              && grep -qx 'install-url=https://betadrop.app/install/?i=stub123' out.txt \
              && grep -qx 'channel-url=https://betadrop.app/install/nightly' out.txt \
              && grep -q 'stub123' sum.txt \
-             && grep -q 'Channel `nightly`' sum.txt; then
+             && grep -q 'Standing link `nightly`' sum.txt; then
             echo "  ok    outputs and summary carry exactly the two links"; pass=$((pass + 1))
           else
             echo "  FAIL  outputs and summary carry exactly the two links"
@@ -344,7 +383,7 @@ jobs:
             log=$(
               export PATH="$PWD/stub:$PATH" RUNNER_TEMP="$PWD" GH_MODE="$mode"
               env PR_NUMBER="$pr" INSTALL_URL='https://betadrop.app/install/?i=stub123' \
-                  CHANNEL_URL="$chan" INPUT_CHANNEL="${chan:+nightly}" \
+                  CHANNEL_URL="$chan" INPUT_STANDING_LINK= INPUT_CHANNEL="${chan:+nightly}" \
                   REPO=acme/app SHA=0123456789abcdef GH_TOKEN=stub \
                   bash comment.sh 2>&1
             ); rc=$?

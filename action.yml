@@ -37,14 +37,22 @@ inputs:
     description: "Release notes for this build — e.g. the commit message."
     required: false
     default: ""
+  standing-link:
+    description: >-
+      A standing-link slug to point at this build once it is live — e.g. acmebeta. That one URL
+      (and any "Download from BetaDrop" button embedded with it) then serves this build with
+      nothing to click, so testers never need a new link. Pro and Studio plans; claim the name
+      first at betadrop.app/standing-links. A name that cannot be used fails the step before
+      anything is uploaded; if the upload lands but the link could not be moved afterwards, the
+      step fails too, so a green run means it really did move. Requires @betadrop/cli 0.3.0 or
+      newer — the step checks the installed CLI and says so by name if the version is too old.
+    required: false
+    default: ""
   channel:
     description: >-
-      A channel slug to point at this build once it is live — e.g. nightly. The channel's link
-      (and any "Download from BetaDrop" button embedded with it) then serves this build with
-      nothing to click. Pro and Studio plans; claim the channel first at betadrop.app/channels.
-      A channel that cannot be used fails the step before anything is uploaded. Requires
-      @betadrop/cli 0.3.0 or newer — the step checks the installed CLI and says so by name if
-      the version it resolved is too old.
+      Deprecated alias for `standing-link`, which is the same feature under its previous name.
+      Permanently accepted: a workflow that already pins `channel:` keeps working and will not be
+      broken. If both are set, `standing-link` wins.
     required: false
     default: ""
   comment-on-pr:
@@ -69,8 +77,13 @@ outputs:
   install-url:
     description: "The OTA install link for the uploaded build."
     value: ${{ steps.publish.outputs.install-url }}
+  standing-link-url:
+    description: "The standing link's URL, when `standing-link` (or `channel`) was set. Empty otherwise."
+    value: ${{ steps.publish.outputs.channel-url }}
   channel-url:
-    description: "The channel's stable install link, when `channel` was set. Empty otherwise."
+    description: >-
+      Deprecated alias for `standing-link-url`, kept so existing workflows reading
+      `outputs.channel-url` keep working. Same value.
     value: ${{ steps.publish.outputs.channel-url }}
 
 runs:
@@ -107,6 +120,7 @@ runs:
         INPUT_FILE: ${{ inputs.file }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_NOTES: ${{ inputs.notes }}
+        INPUT_STANDING_LINK: ${{ inputs.standing-link }}
         INPUT_CHANNEL: ${{ inputs.channel }}
         # Carried into this step so the diagnostics below can name the version that was actually
         # requested. Without it every "your CLI is too old" message read "cli-version: latest",
@@ -125,14 +139,22 @@ runs:
           exit 1
         fi
 
-        # A channel slug is [a-z0-9._-] by construction. Validating it here fails a typo in the
-        # workflow before an upload rather than after one, and — because the slug is echoed into
-        # the job summary further down as Markdown — it also keeps a value like a backtick or an
+        # `standing-link` is the current name for this input; `channel` is what it was called
+        # before 2026-09-11 and is accepted forever. Resolve to one variable here so nothing
+        # below has to know which spelling the workflow used. Both are bound in env: above,
+        # because under `set -u` an unbound INPUT_* aborts the whole script — the failure that
+        # kept this action's main branch red for eight days in September 2026.
+        INPUT_CHANNEL="${INPUT_STANDING_LINK:-${INPUT_CHANNEL:-}}"
+        CLI_LINK_FLAG="--channel"   # replaced below once the installed CLI has been asked
+
+        # A slug is [a-z0-9._-] by construction. Validating it here fails a typo in the workflow
+        # before an upload rather than after one, and — because the slug is echoed into the job
+        # summary further down as Markdown — it also keeps a value like a backtick or an
         # <img> tag out of a page rendered on github.com.
         if [ -n "$INPUT_CHANNEL" ]; then
           case "$INPUT_CHANNEL" in
             *[!a-zA-Z0-9._-]*)
-              echo "::error::channel '$INPUT_CHANNEL' is not a valid slug — letters, digits, dots, dashes and underscores only."
+              echo "::error::standing-link '$INPUT_CHANNEL' is not a valid slug — letters, digits, dots, dashes and underscores only."
               exit 1
               ;;
           esac
@@ -146,10 +168,15 @@ runs:
           # Captured rather than piped into grep: `grep -q` closes the pipe on its first match,
           # and under `pipefail` that SIGPIPE would be read as "the flag is missing".
           cli_help="$(betadrop publish --help 2>&1 || true)"
+          # Which spelling the INSTALLED CLI understands, which is not necessarily the one the
+          # workflow used: `cli-version` can pin a release older than the rename, and
+          # `--standing-link` only exists from 0.3.2. Newer CLIs accept both; prefer the current
+          # name and fall back, so a pinned 0.3.0 keeps working unchanged.
           case "$cli_help" in
-            *--channel*) ;;
+            *--standing-link*) CLI_LINK_FLAG="--standing-link" ;;
+            *--channel*)       CLI_LINK_FLAG="--channel" ;;
             *)
-              echo "::error::channel was set, but the installed @betadrop/cli ($(betadrop --version 2>/dev/null || echo 'version unknown')) has no --channel flag — it needs 0.3.0 or newer. Requested cli-version: ${CLI_VERSION:-latest}."
+              echo "::error::standing-link was set, but the installed @betadrop/cli ($(betadrop --version 2>/dev/null || echo 'version unknown')) supports neither --standing-link nor --channel — it needs 0.3.0 or newer. Requested cli-version: ${CLI_VERSION:-latest}."
               exit 1
               ;;
           esac
@@ -209,7 +236,7 @@ runs:
         args=( publish "$file" --ci )
         [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
         [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
-        [ -n "$INPUT_CHANNEL" ] && args+=( --channel "$INPUT_CHANNEL" )
+        [ -n "$INPUT_CHANNEL" ] && args+=( "$CLI_LINK_FLAG" "$INPUT_CHANNEL" )
 
         # Captured *and* echoed. A plain `out="$(betadrop …)"` swallows stdout, and the CLI has
         # one path where that loses something the user needs: a publish that uploaded fine but
@@ -250,7 +277,7 @@ runs:
             ;;
         esac
         if [ -n "$INPUT_CHANNEL" ] && [ -z "$channel_url" ]; then
-          echo "::error::A channel was requested but the CLI reported no channel link. Installed @betadrop/cli: $(betadrop --version 2>/dev/null || echo 'version unknown'); requested cli-version: ${CLI_VERSION:-latest}."
+          echo "::error::A standing link was requested but the CLI reported no link for it. Installed @betadrop/cli: $(betadrop --version 2>/dev/null || echo 'version unknown'); requested cli-version: ${CLI_VERSION:-latest}."
           exit 1
         fi
 
@@ -276,9 +303,9 @@ runs:
           echo "**[Install on a device]($url)** · \`$url\`"
           echo ""
           if [ -n "$channel_url" ]; then
-            # The channel link leads for the reader who bookmarks: it is the one that will still
+            # The standing link leads for the reader who bookmarks: it is the one that will still
             # point at the newest build next week, which the per-build link above will not.
-            echo "Channel \`$INPUT_CHANNEL\` now serves this build — the stable link is **[$channel_url]($channel_url)**."
+            echo "Standing link \`$INPUT_CHANNEL\` now serves this build — it is **[$channel_url]($channel_url)**."
             echo ""
           fi
           echo "Open it on a phone to install over the air — no TestFlight, no tester accounts."
@@ -286,9 +313,9 @@ runs:
 
         echo "Install link: $url"
         # `if`, not `[ ] &&`: this is the last command in the step, so a bare test that is false
-        # would become the step's exit status and fail every run that did not ask for a channel.
+        # would become the step's exit status and fail every run that did not ask for one.
         if [ -n "$channel_url" ]; then
-          echo "Channel link: $channel_url"
+          echo "Standing link: $channel_url"
         fi
 
     # Opt-in, and a separate step so that a comment that cannot be posted never calls a published
@@ -305,6 +332,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         INSTALL_URL: ${{ steps.publish.outputs.install-url }}
         CHANNEL_URL: ${{ steps.publish.outputs.channel-url }}
+        INPUT_STANDING_LINK: ${{ inputs.standing-link }}
         INPUT_CHANNEL: ${{ inputs.channel }}
         REPO: ${{ github.repository }}
         SHA: ${{ github.event.pull_request.head.sha || github.sha }}
