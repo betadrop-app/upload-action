@@ -1,21 +1,42 @@
 # BetaDrop Upload Action
 
 [![Listed on the GitHub Marketplace](https://img.shields.io/badge/Marketplace-BetaDrop%20Upload-2ea44f?logo=github)](https://github.com/marketplace/actions/betadrop-upload)
+[![Runners: ubuntu · macos · windows](https://img.shields.io/badge/runners-ubuntu%20%C2%B7%20macos%20%C2%B7%20windows-0b64fc)](#notes)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0b64fc)](LICENSE)
 
 <!-- The Marketplace slug comes from action.yml's `name:` ("BetaDrop Upload"), NOT the repository
      name — /marketplace/actions/betadrop-upload-action is a 404. If the action is ever renamed,
      this link breaks silently, because a broken badge still renders as an image. -->
 
-Upload an iOS `.ipa` or Android `.apk` from your CI pipeline to [BetaDrop](https://betadrop.app) and get an instant over-the-air install link — no TestFlight review wait, no Play track, no tester accounts. Testers open the link on their phone and install from the browser.
+**Turn a green CI build into an install link a tester can tap.** This action uploads the `.ipa` or
+`.apk` your job just built to [BetaDrop](https://betadrop.app) and hands back an over-the-air
+install link — no TestFlight review wait, no Play track, no tester accounts. Testers open the link
+on their phone and install from the browser.
 
-The install link lands in three places, so nobody has to go looking for it: a step **output** for
-the rest of your workflow, the **run summary** page where the whole team can see it, and
-optionally a **comment on the pull request** that updates itself on every push.
+```yaml
+- uses: betadrop-app/upload-action@v1
+  with:
+    file: app/build/outputs/apk/release/*.apk
+    token: ${{ secrets.BETADROP_TOKEN }}
+```
+
+That is the whole integration. Create the token under **Settings → Developer → API tokens** at
+[betadrop.app](https://betadrop.app), store it as a repository secret, and the next push produces a
+link.
+
+## Where the link ends up
+
+Three places, so nobody has to go looking for it:
+
+| | |
+| --- | --- |
+| **Step output** | `steps.<id>.outputs.install-url`, for the rest of your workflow. |
+| **Run summary** | On the workflow run's own page — the whole team sees it, not just whoever triggered the build. Nothing to add. |
+| **Pull request** | With `comment-on-pr: true`, a comment that **edits itself** on every later push. |
 
 ### What lands on the run page
 
-Every green build ends with this on the workflow run's own summary — no step to add, and the whole
-team sees it, not just whoever triggered the build. It is rendered below by the same Markdown the
+Every green build ends with this on the run summary. It is rendered below by the same Markdown the
 action writes, so this is the panel itself rather than a picture of one (the link is an example):
 
 > <img src="https://betadrop.app/logo.png" width="28" align="left" alt="BetaDrop">
@@ -36,6 +57,17 @@ edits that comment instead of adding another:
 > `https://betadrop.app/install/?i=EXAMPLE`
 >
 > <sub>Open it on a phone to install over the air. Built from `0123456` · published by <a href="https://betadrop.app">BetaDrop</a></sub>
+
+## When this is the right tool
+
+| Instead of | What changes |
+| --- | --- |
+| **TestFlight external testing** | No Beta App Review between a green build and a tester's phone, and no TestFlight app or invite to accept. Still ad-hoc signing rules — see the UDID note under [Notes](#notes). |
+| **Play internal testing** | No Play Console upload step, no track, no tester list to keep in sync — you hand out a URL. |
+| **Diawi / similar OTA services** | Same idea, wired into CI with one step, plus channels, PR comments and a step output. |
+| **Firebase App Distribution** | No Firebase project, no tester SDK, no invite acceptance — the link works in a plain mobile browser. |
+
+Both platforms, one step, one token.
 
 ## Usage
 
@@ -164,6 +196,9 @@ Prefer to build the comment yourself? The link is a normal step output:
 
 ### One link that follows every build
 
+A new build means a new install link, which means re-sending it. A **channel** is a fixed link that
+always points at the latest build you published to it — hand it out once and stop re-sending:
+
 ```yaml
 - name: Publish to BetaDrop
   id: betadrop
@@ -207,15 +242,13 @@ did not touch it. Pin it once you are past setup:
   with:
     file: "*.ipa"
     token: ${{ secrets.BETADROP_TOKEN }}
-    cli-version: "0.2.13"
+    cli-version: "0.3.0"
 ```
 
 ## Troubleshooting
 
 **`the installed @betadrop/cli … has no --channel flag`** — the version that resolved is older than
-0.3.0, which is where `channel` landed. Set `cli-version` to 0.3.0 or newer; if `latest` itself is
-older than that, the flag has not reached npm yet and the rest of the action still works without
-`channel`.
+0.3.0, which is where `channel` landed. Set `cli-version` to 0.3.0 or newer.
 
 **The PR comment never appears** — check the run log for the warning. The usual cause is the job
 lacking `permissions: pull-requests: write`; the other is an event with no pull request, which is
@@ -241,6 +274,21 @@ breaks the contract this action reads. Report it; the last line of the run log i
 - Build links follow your account's retention settings; see [pricing](https://betadrop.app/pricing/).
 - An **ad-hoc iOS build uploaded from CI still only installs on registered devices**. If a tester reports "it downloads but won't open", their UDID was not in the provisioning profile when the IPA was signed. Send them the [UDID checker](https://betadrop.app/udid-checker/) — it reads the UDID off the iPhone itself, so they don't need a Mac or a cable — then add the device in the Apple Developer portal and re-sign.
 - This action is a thin wrapper over the same [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) you'd use locally, so CI behaves exactly like your machine.
+
+## Also from BetaDrop
+
+The same publish step, on the other two surfaces — one account, one set of API tokens:
+
+| | |
+|---|---|
+| **[`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli)**<br><sub>[source](https://github.com/betadrop-app/betadrop-cli)</sub> | `betadrop publish app.ipa` from your terminal. Prints the install link and a scannable QR code. |
+| **[`@betadrop/mcp`](https://www.npmjs.com/package/@betadrop/mcp)**<br><sub>[source](https://github.com/betadrop-app/betadrop-mcp)</sub> | MCP server — publish builds, list history and manage tokens by asking Claude, Cursor or Copilot, without leaving the editor. |
+
+## Contributing
+
+Issues and pull requests are welcome — see [SECURITY.md](SECURITY.md) for reporting a
+vulnerability privately. If this saved you a TestFlight round-trip, a ⭐ helps other mobile teams
+find it.
 
 ## License
 
