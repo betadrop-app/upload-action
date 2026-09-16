@@ -55,6 +55,31 @@ inputs:
       broken. If both are set, `standing-link` wins.
     required: false
     default: ""
+  expires-in-days:
+    description: >-
+      Stop the install link working after this many days. Clamped to your plan's maximum, and the
+      run log says so when it is. Requires @betadrop/cli 0.4.0 or newer.
+    required: false
+    default: ""
+  max-downloads:
+    description: >-
+      Stop the install link working after this many downloads. Combine with the other two and it
+      stops at whichever comes first. Requires @betadrop/cli 0.4.0 or newer.
+    required: false
+    default: ""
+  max-devices:
+    description: >-
+      Stop the install link working after this many different devices. Requires @betadrop/cli 0.4.0
+      or newer.
+    required: false
+    default: ""
+  inspect:
+    description: >-
+      Check the build will install from a link before uploading it — provisioning profile type and
+      expiry, bundle ID, signing, testOnly — and fail the step, with nothing uploaded, if it will
+      not. Needs only a read ability on the token. Requires @betadrop/cli 0.4.0 or newer.
+    required: false
+    default: "false"
   comment-on-pr:
     description: >-
       Post the install link as a comment on the pull request, and edit that same comment on every
@@ -122,6 +147,10 @@ runs:
         INPUT_NOTES: ${{ inputs.notes }}
         INPUT_STANDING_LINK: ${{ inputs.standing-link }}
         INPUT_CHANNEL: ${{ inputs.channel }}
+        INPUT_EXPIRES_IN_DAYS: ${{ inputs.expires-in-days }}
+        INPUT_MAX_DOWNLOADS: ${{ inputs.max-downloads }}
+        INPUT_MAX_DEVICES: ${{ inputs.max-devices }}
+        INPUT_INSPECT: ${{ inputs.inspect }}
         # Carried into this step so the diagnostics below can name the version that was actually
         # requested. Without it every "your CLI is too old" message read "cli-version: latest",
         # which is exactly the wrong advice for someone who pinned an old one.
@@ -226,6 +255,55 @@ runs:
           exit 1
         fi
         file="${matches[0]}"
+
+        # Expiry limits and the pre-upload check both arrived in @betadrop/cli 0.4.0. Read with
+        # `:-` so a harness that predates these inputs cannot trip `set -u` — the lesson of
+        # INPUT_CHANNEL — and checked against the INSTALLED CLI for the reason the standing-link
+        # flag is: `cli-version` can pin a release that has never heard of them.
+        expiry_args=()
+        for pair in "expires-in-days:${INPUT_EXPIRES_IN_DAYS:-}" "max-downloads:${INPUT_MAX_DOWNLOADS:-}" "max-devices:${INPUT_MAX_DEVICES:-}"; do
+          name="${pair%%:*}"
+          value="$(printf '%s' "${pair#*:}" | tr -d '[:space:]')"
+          [ -z "$value" ] && continue
+          case "$value" in
+            *[!0-9]*|0*)
+              echo "::error::$name must be a whole number of 1 or more (got '$value')."
+              exit 1
+              ;;
+          esac
+          expiry_args+=( "--$name" "$value" )
+        done
+        if [ "${#expiry_args[@]}" -gt 0 ]; then
+          publish_help="$(betadrop publish --help 2>&1 || true)"
+          case "$publish_help" in
+            *--expires-in-days*) ;;
+            *)
+              echo "::error::expires-in-days, max-downloads and max-devices need @betadrop/cli 0.4.0 or newer; the installed CLI is $(betadrop --version 2>/dev/null || echo 'version unknown'). Requested cli-version: ${CLI_VERSION:-latest}."
+              exit 1
+              ;;
+          esac
+        fi
+
+        if [ "${INPUT_INSPECT:-false}" = "true" ]; then
+          root_help="$(betadrop --help 2>&1 || true)"
+          case "$root_help" in
+            *inspect*) ;;
+            *)
+              echo "::error::inspect: true needs @betadrop/cli 0.4.0 or newer; the installed CLI is $(betadrop --version 2>/dev/null || echo 'version unknown'). Requested cli-version: ${CLI_VERSION:-latest}."
+              exit 1
+              ;;
+          esac
+          echo "Checking $file will install from a link"
+          set +e
+          betadrop inspect "$file"
+          inspect_status=$?
+          set -e
+          if [ "$inspect_status" -ne 0 ]; then
+            echo "::error::$file failed the install check, so nothing was uploaded. The reasons are listed above."
+            exit "$inspect_status"
+          fi
+        fi
+
         echo "Publishing $file"
 
         # --ci prints the install URL as the *last* line of stdout, which is exactly what an
@@ -237,6 +315,9 @@ runs:
         [ -n "$INPUT_NAME" ] && args+=( --name "$INPUT_NAME" )
         [ -n "$INPUT_NOTES" ] && args+=( --notes "$INPUT_NOTES" )
         [ -n "$INPUT_CHANNEL" ] && args+=( "$CLI_LINK_FLAG" "$INPUT_CHANNEL" )
+        # `${arr[@]+…}` rather than a bare expansion: bash 3.2 on macOS runners treats an empty
+        # array as unbound under `set -u`.
+        args+=( ${expiry_args[@]+"${expiry_args[@]}"} )
 
         # Captured *and* echoed. A plain `out="$(betadrop …)"` swallows stdout, and the CLI has
         # one path where that loses something the user needs: a publish that uploaded fine but
@@ -362,7 +443,7 @@ runs:
           echo "\`$INSTALL_URL\`"
           if [ -n "${CHANNEL_URL:-}" ]; then
             echo ""
-            echo "Channel \`${INPUT_CHANNEL:-}\` serves this build too — **[$CHANNEL_URL]($CHANNEL_URL)** stays valid as later builds land."
+            echo "Standing link \`${INPUT_STANDING_LINK:-${INPUT_CHANNEL:-}}\` serves this build too — **[$CHANNEL_URL]($CHANNEL_URL)** stays valid as later builds land."
           fi
           echo ""
           echo "<sub>Open it on a phone to install over the air. Built from \`${SHA_SHORT}\` · published by <a href=\"https://betadrop.app\">BetaDrop</a></sub>"

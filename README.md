@@ -184,6 +184,10 @@ Prefer to build the comment yourself? The link is a normal step output:
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
 | `standing-link` | no | — | A [standing link](https://betadrop.app/standing-links/) slug to point at this build once it is live — e.g. `acmebeta`. That one URL, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the name first. A name that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
 | `channel` | no | — | Deprecated alias for `standing-link` — the same feature under its previous name. Permanently accepted, so a workflow already pinning it keeps working. If both are set, `standing-link` wins. |
+| `expires-in-days` | no | — | Stop the install link working after this many days. Clamped to your plan's maximum; the log says when. Needs `@betadrop/cli` 0.4.0+. |
+| `max-downloads` | no | — | Stop it after this many downloads. Needs `@betadrop/cli` 0.4.0+. |
+| `max-devices` | no | — | Stop it after this many different devices. Set more than one limit and the link stops at whichever comes first. Needs `@betadrop/cli` 0.4.0+. |
+| `inspect` | no | `false` | Check the build will install from a link **before** uploading it, and fail the step with nothing uploaded if it will not. Needs `@betadrop/cli` 0.4.0+. |
 | `comment-on-pr` | no | `false` | Post the install link as a comment on the pull request, editing that same comment on later pushes. Needs `pull-requests: write`. Skipped on events with no PR. |
 | `github-token` | no | `${{ github.token }}` | Token used for that comment. Override only if it should come from another account. |
 | `cli-version` | no | `latest` | Version of [`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli) to use. Pin for reproducible pipelines. |
@@ -221,6 +225,38 @@ newer**. The step asks the installed CLI which spelling it understands and uses 
 0.3.0 keeps working unchanged; if the version is older than either, the step names it rather than
 surfacing commander's noise. Every other input works on any published version.
 
+### Refuse a build that will not install
+
+The expensive signing mistakes surface late: a build exported with an App Store profile, a profile
+that expired last week, or an APK Android Studio marked `testOnly` all upload fine and then fail on a
+tester's phone. `inspect: true` reads the build first and fails the step — with nothing uploaded —
+when it would not install from a link:
+
+```yaml
+- uses: betadrop-app/upload-action@v1
+  with:
+    file: build/*.ipa
+    token: ${{ secrets.BETADROP_TOKEN }}
+    inspect: true
+    expires-in-days: 14
+```
+
+The run log lists each check. It covers the provisioning profile's type and expiry, a profile issued
+for a different bundle ID, unsigned and `testOnly` APKs, and v1-only signatures on apps targeting
+Android 11 or later.
+
+### Tell Slack when the build lands
+
+Webhooks live on your account rather than in the workflow, so every upload path — this action, the
+CLI, the dashboard — posts to the same place. Add one once:
+
+```bash
+npx @betadrop/cli webhooks add https://hooks.slack.com/services/T000/B000/XXXX
+```
+
+Discord webhook URLs work the same way, and any other URL receives signed JSON. See
+<https://betadrop.app/docs/webhooks/>.
+
 ### A download button that follows the standing link
 
 Wrap the standing link in the "Download from BetaDrop" badge and paste it in your README — one
@@ -244,7 +280,7 @@ did not touch it. Pin it once you are past setup:
   with:
     file: "*.ipa"
     token: ${{ secrets.BETADROP_TOKEN }}
-    cli-version: "0.3.0"
+    cli-version: "0.4.0"
 ```
 
 ## Troubleshooting
