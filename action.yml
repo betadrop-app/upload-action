@@ -10,7 +10,7 @@ name: "BetaDrop Upload"
 # GitHub Marketplace rejects a description of 125 characters or more, and this string is also the
 # one-line blurb shown in Marketplace search results — so it has to carry both platforms and the
 # hook inside that budget. The longer pitch lives in README.md, which the listing renders in full.
-description: "Upload an iOS .ipa or Android .apk from CI and get an instant over-the-air install link. No TestFlight wait."
+description: "Upload an Android .apk or iOS .ipa from CI and get an over-the-air install link. Try it with no token first."
 author: "BetaDrop"
 
 branding:
@@ -27,8 +27,18 @@ inputs:
     description: >-
       A BetaDrop API token (bd_live_…). Create one at betadrop.app under
       Settings → Developer → API tokens, and store it as a repository secret — never inline
-      it in the workflow.
-    required: true
+      it in the workflow. Optional: without one the build is uploaded as a guest, with a warning
+      on the run. A guest link lasts 24 hours and each repository gets 1 guest upload every 30
+      days; a token keeps builds on your account and unlocks every other input. Guest uploads
+      need @betadrop/cli 0.5.0 or newer.
+    required: false
+    default: ""
+  require-token:
+    description: >-
+      Fail the step when no token is supplied, instead of uploading as a guest. Set this when an
+      empty token can only mean a misconfigured secret.
+    required: false
+    default: "false"
   name:
     description: "Override the build name shown on the install page (defaults to the app's own name)."
     required: false
@@ -110,6 +120,11 @@ outputs:
       Deprecated alias for `standing-link-url`, kept so existing workflows reading
       `outputs.channel-url` keep working. Same value.
     value: ${{ steps.publish.outputs.channel-url }}
+  guest-expires-at:
+    description: >-
+      When the build was uploaded as a guest (no token), the time its link stops working, as an
+      ISO 8601 UTC timestamp. Empty when a token was used.
+    value: ${{ steps.publish.outputs.guest-expires-at }}
 
 runs:
   using: "composite"
@@ -151,6 +166,7 @@ runs:
         INPUT_MAX_DOWNLOADS: ${{ inputs.max-downloads }}
         INPUT_MAX_DEVICES: ${{ inputs.max-devices }}
         INPUT_INSPECT: ${{ inputs.inspect }}
+        INPUT_REQUIRE_TOKEN: ${{ inputs.require-token }}
         # Carried into this step so the diagnostics below can name the version that was actually
         # requested. Without it every "your CLI is too old" message read "cli-version: latest",
         # which is exactly the wrong advice for someone who pinned an old one.
@@ -161,11 +177,40 @@ runs:
         # A token that arrived from a repository secret is masked by the runner already. One pasted
         # literally — or read out of a file by a previous step — is not, and would print in
         # clear if any command here ever echoed it. Registering the mask costs one line.
+        #
+        # No token is a guest upload, not an error: since v1.5.0 a first run works with nothing to
+        # set up. `require-token: true` restores the old refusal for teams who would rather an
+        # empty secret failed loudly than published a 24-hour guest build. A pull_request from a
+        # fork lands here too, because the runner hands forks empty secrets.
+        guest=0
         if [ -n "${BETADROP_TOKEN:-}" ]; then
           echo "::add-mask::$BETADROP_TOKEN"
-        else
-          echo "::error::No token supplied. Create a BetaDrop API token at betadrop.app under Settings → Developer → API tokens, store it as a repository secret, and pass it to this action's token: input. See https://github.com/betadrop-app/upload-action#inputs"
+        elif [ "${INPUT_REQUIRE_TOKEN:-false}" = "true" ]; then
+          echo "::error::No token supplied, and require-token is true. Create a BetaDrop API token at betadrop.app under Settings → Developer → API tokens, store it as a repository secret, and pass it to this action's token: input. See https://betadrop.app/docs/github-action/#token"
           exit 1
+        else
+          guest=1
+          # Unset rather than empty, and tell the CLI which client it is: the server counts guest
+          # uploads per client, and the CLI words its "add a token" steps for this action.
+          unset BETADROP_TOKEN
+          export BETADROP_VIA=action
+          # Guest uploads arrived in @betadrop/cli 0.5.0, the release that also added
+          # --require-token, so that flag in the help is the capability probe. An older CLI would
+          # otherwise fail with "not logged in", which names neither the version nor the fix.
+          guest_help="$(betadrop publish --help 2>&1 || true)"
+          case "$guest_help" in
+            *--require-token*) ;;
+            *)
+              echo "::error::No token supplied, and the installed @betadrop/cli ($(betadrop --version 2>/dev/null || echo 'version unknown')) cannot upload as a guest — it needs 0.5.0 or newer. Requested cli-version: ${CLI_VERSION:-latest}. Pass a token: input, or use a newer cli-version."
+              exit 1
+              ;;
+          esac
+          # inspect asks the API with the token's read ability; a guest has none, and skipping the
+          # check silently would publish a build the workflow asked to have checked first.
+          if [ "${INPUT_INSPECT:-false}" = "true" ]; then
+            echo "::error::inspect: true needs a token: input; the check runs against your account. See https://betadrop.app/docs/github-action/#token"
+            exit 1
+          fi
         fi
 
         # `standing-link` is the current name for this input; `channel` is what it was called
@@ -328,12 +373,25 @@ runs:
         # mktemp, not $RUNNER_TEMP: on a Windows runner RUNNER_TEMP is a backslashed Windows
         # path (D:\a\_temp), which bash on that image does not reliably resolve.
         log="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/betadrop-publish.$$.log")"
+        # stderr is captured too, then replayed into the log. A guest run's notice is printed by
+        # the CLI (its numbers come from the API, so they are never restated here) and this step
+        # raises it as an annotation, which needs the text. Replayed whole and before any check,
+        # so a failure's message is in the log exactly as the CLI wrote it.
+        errlog="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/betadrop-publish.$$.err")"
         set +e
-        betadrop "${args[@]}" | tee "$log"
+        betadrop "${args[@]}" 2>"$errlog" | tee "$log"
         status=${PIPESTATUS[0]}
         set -e
+        cat "$errlog" >&2
         if [ "$status" -ne 0 ]; then
-          echo "::error::betadrop publish failed (exit $status). The CLI's own message is above."
+          if [ "$guest" -eq 1 ]; then
+            # The CLI leads a refusal with one "✗ …" line (e.g. no guest upload left for this
+            # repository); that is the line worth an annotation. The token steps follow it above.
+            reason="$(grep -m1 '^✗ ' "$errlog" | sed 's/^✗ //' || true)"
+            echo "::error::${reason:-betadrop publish failed (exit $status).} The steps to add a free token are above: https://betadrop.app/docs/github-action/#token"
+          else
+            echo "::error::betadrop publish failed (exit $status). The CLI's own message is above."
+          fi
           exit "$status"
         fi
         out="$(cat "$log")"
@@ -362,8 +420,32 @@ runs:
           exit 1
         fi
 
+        # A guest run's --ci stdout carries `guest-expires-at=<ISO time>` above the URL. Checked
+        # against a strict shape before it goes anywhere: it is written into $GITHUB_OUTPUT and
+        # rendered in the summary, so it must be one line of timestamp characters and nothing else.
+        expires_at=""
+        expires_human=""
+        if [ "$guest" -eq 1 ]; then
+          expires_at="$(printf '%s\n' "$out" | grep -m1 '^guest-expires-at=' | cut -d= -f2- || true)"
+          case "$expires_at" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*)
+              case "$expires_at" in *[!0-9TZ:.+-]*) expires_at="" ;; esac
+              ;;
+            *) expires_at="" ;;
+          esac
+          [ -n "$expires_at" ] && expires_human="${expires_at:0:10} ${expires_at:11:5} UTC"
+          # The CLI's own notice, raised as an annotation so it shows on the run page and not only
+          # in the step log. Fallback wording only if a future CLI words its notice differently.
+          notice="$(grep -m1 '^warning: No BetaDrop token' "$errlog" | sed 's/^warning: //' || true)"
+          if [ -z "$notice" ]; then
+            notice="No BetaDrop token, so this build was uploaded as a guest${expires_human:+ and its link works until $expires_human}. Add a free token to keep uploading: https://betadrop.app/docs/github-action/#token"
+          fi
+          echo "::warning title=Guest upload::$notice"
+        fi
+
         echo "install-url=$url" >> "$GITHUB_OUTPUT"
         echo "channel-url=$channel_url" >> "$GITHUB_OUTPUT"
+        echo "guest-expires-at=$expires_at" >> "$GITHUB_OUTPUT"
 
         # The human-facing copy of the same fact: a tester-ready link on the run page itself,
         # so nobody digs through step logs to find it.
@@ -390,6 +472,10 @@ runs:
             echo ""
           fi
           echo "Open it on a phone to install over the air — no TestFlight, no tester accounts."
+          if [ "$guest" -eq 1 ]; then
+            echo ""
+            echo "Guest upload, expires ${expires_human:-in 24 hours}. Add a free token to keep builds on your account: [how to add one](https://betadrop.app/docs/github-action/#token)."
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
         echo "Install link: $url"
@@ -413,6 +499,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         INSTALL_URL: ${{ steps.publish.outputs.install-url }}
         CHANNEL_URL: ${{ steps.publish.outputs.channel-url }}
+        GUEST_EXPIRES_AT: ${{ steps.publish.outputs.guest-expires-at }}
         INPUT_STANDING_LINK: ${{ inputs.standing-link }}
         INPUT_CHANNEL: ${{ inputs.channel }}
         REPO: ${{ github.repository }}
@@ -444,6 +531,12 @@ runs:
           if [ -n "${CHANNEL_URL:-}" ]; then
             echo ""
             echo "Standing link \`${INPUT_STANDING_LINK:-${INPUT_CHANNEL:-}}\` serves this build too — **[$CHANNEL_URL]($CHANNEL_URL)** stays valid as later builds land."
+          fi
+          # A guest link stops working after 24 hours, which a reviewer opening the PR next week
+          # needs to know before tapping it. The value was shape-checked by the publish step.
+          if [ -n "${GUEST_EXPIRES_AT:-}" ]; then
+            echo ""
+            echo "Guest upload: this link works until ${GUEST_EXPIRES_AT:0:10} ${GUEST_EXPIRES_AT:11:5} UTC."
           fi
           echo ""
           echo "<sub>Open it on a phone to install over the air. Built from \`${SHA_SHORT}\` · published by <a href=\"https://betadrop.app\">BetaDrop</a></sub>"

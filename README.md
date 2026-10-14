@@ -24,6 +24,11 @@ That is the whole integration. Create the token under **Settings → Developer �
 [betadrop.app](https://betadrop.app), store it as a repository secret, and the next push produces a
 link.
 
+**Trying it first?** Leave `token` out. The build is uploaded as a guest: you still get the install
+link, with a warning on the run saying so. A guest link lasts 24 hours, and each repository gets 1
+guest upload every 30 days. Add a free token when you want builds kept on your account and the rest
+of the inputs below. Set `require-token: true` if a missing secret should fail the step instead.
+
 ## Where the link ends up
 
 Three places, so nobody has to go looking for it:
@@ -83,6 +88,27 @@ Both platforms, one step, one token.
   run: echo "Install at ${{ steps.betadrop.outputs.install-url }}"
 ```
 
+### Android example
+
+```yaml
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with: { java-version: "17", distribution: "temurin" }
+      - name: Build release APK
+        run: ./gradlew assembleRelease
+      - name: Publish to BetaDrop
+        uses: betadrop-app/upload-action@v1
+        with:
+          file: app/build/outputs/apk/release/*.apk
+          token: ${{ secrets.BETADROP_TOKEN }}
+          notes: ${{ github.event.head_commit.message }}
+```
+
 ### iOS example
 
 ```yaml
@@ -110,27 +136,6 @@ runners, rejects it outright. If your fastlane is old enough to reject the new n
 it through `export_options: { method: "release-testing" }` in a Fastfile instead. Either
 way the export runs before this action does, so getting it wrong fails the build a step
 early.
-
-### Android example
-
-```yaml
-jobs:
-  beta:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK
-        uses: actions/setup-java@v6
-        with: { java-version: "17", distribution: "temurin" }
-      - name: Build release APK
-        run: ./gradlew assembleRelease
-      - name: Publish to BetaDrop
-        uses: betadrop-app/upload-action@v1
-        with:
-          file: app/build/outputs/apk/release/*.apk
-          token: ${{ secrets.BETADROP_TOKEN }}
-          notes: ${{ github.event.head_commit.message }}
-```
 
 ### Post the link on the pull request
 
@@ -179,7 +184,8 @@ Prefer to build the comment yourself? The link is a normal step output:
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `file` | yes | — | Path to the `.ipa`/`.apk`. Globs allowed; must match exactly one file. |
-| `token` | yes | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. |
+| `token` | no | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. Without one the build is uploaded as a guest: a 24-hour link and 1 guest upload per repository every 30 days. `name` and `notes` are ignored with a warning; `standing-link`, the expiry inputs and `inspect` fail the step before anything is uploaded. Needs `@betadrop/cli` 0.5.0+. |
+| `require-token` | no | `false` | Fail the step when `token` is empty instead of uploading as a guest. Use it when an empty token can only mean a misnamed or missing secret. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
 | `standing-link` | no | — | A [standing link](https://betadrop.app/standing-links/) slug to point at this build once it is live — e.g. `acmebeta`. That one URL, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the name first. A name that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
@@ -199,6 +205,7 @@ Prefer to build the comment yourself? The link is a normal step output:
 | `install-url` | The OTA install link for the uploaded build. |
 | `standing-link-url` | The standing link's URL when `standing-link` (or `channel`) was set; empty otherwise. |
 | `channel-url` | Deprecated alias for `standing-link-url`. Same value, kept so existing workflows keep working. |
+| `guest-expires-at` | For a guest upload (no `token`), when its link stops working, as an ISO 8601 UTC time. Empty when a token was used. |
 
 ### One link that never changes
 
@@ -284,6 +291,16 @@ did not touch it. Pin it once you are past setup:
 ```
 
 ## Troubleshooting
+
+**`Guest upload` warning on the run** — no `token` reached the step, so the build went up as a
+guest. If you meant to pass one, check the secret's name matches the workflow, and note that
+`pull_request` runs from forks get empty secrets. Set `require-token: true` to make this an error.
+
+**`No free guest upload is left for this repository`** — the repository has used its guest upload
+for this 30-day window. Add a free token; the step's log lists the steps.
+
+**`cannot upload as a guest — it needs 0.5.0 or newer`** — `cli-version` pins a CLI older than
+guest uploads. Unpin it, or pass a token.
 
 **`the installed @betadrop/cli … supports neither --standing-link nor --channel`** — the version
 that resolved is older than 0.3.0, which is where the flag landed. Set `cli-version` to 0.3.0 or
