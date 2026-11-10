@@ -1,12 +1,12 @@
 # BetaDrop Upload Action
 
-[![Listed on the GitHub Marketplace](https://img.shields.io/badge/Marketplace-BetaDrop%20Upload-2ea44f?logo=github)](https://github.com/marketplace/actions/betadrop-upload)
+[![Listed on the GitHub Marketplace](https://img.shields.io/badge/Marketplace-BetaDrop%20IPA%20%26%20APK%20App%20Distribution-2ea44f?logo=github)](https://github.com/marketplace/actions/betadrop-ipa-apk-app-distribution)
 [![Runners: ubuntu · macos · windows](https://img.shields.io/badge/runners-ubuntu%20%C2%B7%20macos%20%C2%B7%20windows-0b64fc)](#notes)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0b64fc)](LICENSE)
 
-<!-- The Marketplace slug comes from action.yml's `name:` ("BetaDrop Upload"), NOT the repository
-     name — /marketplace/actions/betadrop-upload-action is a 404. If the action is ever renamed,
-     this link breaks silently, because a broken badge still renders as an image. -->
+<!-- The Marketplace slug comes from action.yml's `name:` ("BetaDrop IPA & APK App Distribution",
+     renamed from "BetaDrop Upload" on 2026-11-10), NOT the repository name. If the action is
+     renamed again, this link breaks silently, because a broken badge still renders as an image. -->
 
 **Turn a green CI build into an install link a tester can tap.** This action uploads the `.ipa` or
 `.apk` your job just built to [BetaDrop](https://betadrop.app) and hands back an over-the-air

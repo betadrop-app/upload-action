@@ -6,7 +6,12 @@
 # the same tool a developer uses locally — one client to maintain, and CI behaves exactly like
 # the laptop. Node is preinstalled on every GitHub-hosted runner image, so `npm i -g` needs no
 # setup step.
-name: "BetaDrop Upload"
+# Renamed from "BetaDrop Upload" on 2026-11-10 so Marketplace search matches the words people
+# type ("ipa", "apk", "app distribution"). The Marketplace slug is derived from this name, so the
+# listing moved from /marketplace/actions/betadrop-upload to
+# /marketplace/actions/betadrop-ipa-apk-app-distribution once a release was published with the
+# new name. Renaming again moves it again: update the README badge and every betadrop.app link.
+name: "BetaDrop IPA & APK App Distribution"
 # GitHub Marketplace rejects a description of 125 characters or more, and this string is also the
 # one-line blurb shown in Marketplace search results — so it has to carry both platforms and the
 # hook inside that budget. The longer pitch lives in README.md, which the listing renders in full.
