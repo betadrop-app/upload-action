@@ -662,12 +662,22 @@ jobs:
           inspect: true
           comment-on-pr: true
 
-      # No token: input at all, which is what a first-time user (or a fork's pull_request) sends.
-      - name: Call the action with no token, as a first-time user would
+      # No token: input at all, which is what a fork's pull_request or a Dependabot run sends. With
+      # the default require-token it must FAIL and never reach publish (asserted below).
+      - name: Call the action with no token and the default require-token
+        id: nogo
+        continue-on-error: true
+        uses: ./
+        with:
+          file: wired/*.apk
+
+      # A first-time user who opted in to a guest upload.
+      - name: Call the action with no token and require-token false, as a first-time user would
         id: guest
         uses: ./
         with:
           file: wired/*.apk
+          require-token: false
 
       - name: The declared outputs came back, and the inputs arrived as flags
         shell: bash
@@ -675,6 +685,8 @@ jobs:
           INSTALL_URL: ${{ steps.act.outputs.install-url }}
           CHANNEL_URL: ${{ steps.act.outputs.channel-url }}
           TOKEN_EXPIRES_AT: ${{ steps.act.outputs.guest-expires-at }}
+          NOGO_OUTCOME: ${{ steps.nogo.outcome }}
+          NOGO_URL: ${{ steps.nogo.outputs.install-url }}
           GUEST_URL: ${{ steps.guest.outputs.install-url }}
           GUEST_EXPIRES_AT: ${{ steps.guest.outputs.guest-expires-at }}
           # Through env for the same reason the action passes its inputs that way, and so this
@@ -689,12 +701,17 @@ jobs:
           # carrying the install URL.
           [ -z "$CHANNEL_URL" ] || { echo "channel-url should be empty, got '$CHANNEL_URL'"; fail=1; }
           [ -z "$TOKEN_EXPIRES_AT" ] || { echo "a token run reported a guest expiry: '$TOKEN_EXPIRES_AT'"; fail=1; }
+          [ "$NOGO_OUTCOME" = "failure" ] \
+            || { echo "no token with the default require-token should fail the step, got '$NOGO_OUTCOME'"; fail=1; }
+          [ -z "$NOGO_URL" ] || { echo "the refused run still produced a link: '$NOGO_URL'"; fail=1; }
           [ "$GUEST_URL" = "https://betadrop.app/i/guest42" ] \
             || { echo "the guest run's install-url did not reach the caller: '$GUEST_URL'"; fail=1; }
           [ "$GUEST_EXPIRES_AT" = "2026-10-15T10:03:56Z" ] \
             || { echo "guest-expires-at did not reach the caller: '$GUEST_EXPIRES_AT'"; fail=1; }
           grep -q '^guest argv: publish wired/app-release.apk --ci via=action$' "$RUNNER_TEMP/argv" \
             || { echo "the token-less call did not run as a guest:"; cat "$RUNNER_TEMP/argv"; fail=1; }
+          [ "$(grep -c '^guest argv:' "$RUNNER_TEMP/argv")" = 1 ] \
+            || { echo "the refused no-token run reached publish:"; cat "$RUNNER_TEMP/argv"; fail=1; }
           grep -q '^inspected wired/app-release.apk$' "$RUNNER_TEMP/argv" \
             || { echo "inspect: true did not run the check:"; cat "$RUNNER_TEMP/argv"; fail=1; }
           grep -q -- '--expires-in-days 14 --max-devices 25' "$RUNNER_TEMP/argv" \
