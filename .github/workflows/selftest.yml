@@ -447,11 +447,19 @@ jobs:
             echo "  FAIL  a guest run's summary says it is a guest upload and when it expires"
             sed 's/^/        | /' out.txt; sed 's/^/        | /' sum.txt; fail=$((fail + 1))
           fi
-          case_ "an unset require-token input still means a guest run" cli_v050 ok \
-            'guest-expires-at=2026' \
+          case_ "an unset require-token input fails safe: no token, no upload" cli_v050 err \
+            '::error::No token supplied\. Create a BetaDrop API token' \
             "${G[@]}" INPUT_INSPECT=false
+          if grep -q 'stub-env:' check.txt; then
+            echo "  FAIL  an unset require-token still reached publish"; fail=$((fail + 1))
+          else
+            echo "  ok    an unset require-token never reaches publish"; pass=$((pass + 1))
+          fi
+          case_ "a require-token typo is not read as false" cli_v050 err \
+            '::error::No token supplied\.' \
+            "${G[@]}" INPUT_INSPECT=false INPUT_REQUIRE_TOKEN=flase
           case_ "require-token: true and no token fails with the token message" cli_v050 err \
-            '::error::No token supplied, and require-token is true\. Create a BetaDrop API token' \
+            '::error::No token supplied\. Create a BetaDrop API token' \
             "${G[@]}" INPUT_INSPECT=false INPUT_REQUIRE_TOKEN=true
           if grep -q 'stub-env:' check.txt; then
             echo "  FAIL  require-token still reached publish"; fail=$((fail + 1))

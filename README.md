@@ -24,10 +24,12 @@ That is the whole integration. Create the token under **Settings → Developer �
 [betadrop.app](https://betadrop.app), store it as a repository secret, and the next push produces a
 link.
 
-**Trying it first?** Leave `token` out. The build is uploaded as a guest: you still get the install
-link, with a warning on the run saying so. A guest link lasts 24 hours, and each repository gets 1
-guest upload every 30 days. Add a free token when you want builds kept on your account and the rest
-of the inputs below. Set `require-token: true` if a missing secret should fail the step instead.
+**Trying it first?** Leave `token` out and set `require-token: false`. The build is uploaded as a
+guest: you still get the install link, with a warning on the run saying so. A guest link is public,
+lasts 24 hours, and each repository gets 1 guest upload every 30 days. Add a free token when you
+want builds kept on your account and the rest of the inputs below. Without `require-token: false`,
+a missing token fails the step, so a fork or Dependabot run with an empty secret never publishes a
+build by accident.
 
 ## Where the link ends up
 
@@ -184,8 +186,8 @@ Prefer to build the comment yourself? The link is a normal step output:
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `file` | yes | — | Path to the `.ipa`/`.apk`. Globs allowed; must match exactly one file. |
-| `token` | no | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. Without one the build is uploaded as a guest: a 24-hour link and 1 guest upload per repository every 30 days. `name` and `notes` are ignored with a warning; `standing-link`, the expiry inputs and `inspect` fail the step before anything is uploaded. Needs `@betadrop/cli` 0.5.0+. |
-| `require-token` | no | `false` | Fail the step when `token` is empty instead of uploading as a guest. Use it when an empty token can only mean a misnamed or missing secret. |
+| `token` | no | — | A BetaDrop API token (`bd_live_…`). Create one under **Settings → Developer → API tokens** at [betadrop.app](https://betadrop.app), and store it as a repository secret. Without one the step fails, unless `require-token` is `false`: then the build is uploaded as a guest, a public 24-hour link with 1 guest upload per repository every 30 days. `name` and `notes` are ignored with a warning; `standing-link`, the expiry inputs and `inspect` fail the step before anything is uploaded. Needs `@betadrop/cli` 0.5.0+. |
+| `require-token` | no | `true` | Fail the step when `token` is empty. Set it to `false` to upload as a guest instead. Keep the default wherever a secret can be empty without anyone meaning it: `pull_request` runs from forks and Dependabot get no secrets. |
 | `name` | no | — | Override the build name shown on the install page. |
 | `notes` | no | — | Release notes for this build — e.g. the commit message. |
 | `standing-link` | no | — | A [standing link](https://betadrop.app/standing-links/) slug to point at this build once it is live — e.g. `acmebeta`. That one URL, and any "Download from BetaDrop" button embedded with it, then serves this build with nothing to click. Pro and Studio plans; claim the name first. A name that cannot be used fails the step **before** anything is uploaded. Needs `@betadrop/cli` 0.3.0+ — the step verifies this before uploading. |
@@ -292,9 +294,12 @@ did not touch it. Pin it once you are past setup:
 
 ## Troubleshooting
 
-**`Guest upload` warning on the run** — no `token` reached the step, so the build went up as a
-guest. If you meant to pass one, check the secret's name matches the workflow, and note that
-`pull_request` runs from forks get empty secrets. Set `require-token: true` to make this an error.
+**`No token supplied`** — no `token` reached the step. Check the secret's name matches the workflow,
+and note that `pull_request` runs from forks and Dependabot get empty secrets. To upload without a
+token as a guest instead, set `require-token: false`.
+
+**`Guest upload` warning on the run** — `require-token` is `false` and no `token` reached the step, so
+the build went up as a public 24-hour guest link.
 
 **`No free guest upload is left for this repository`** — the repository has used its guest upload
 for this 30-day window. Add a free token; the step's log lists the steps.

@@ -15,7 +15,7 @@ name: "BetaDrop IPA & APK App Distribution"
 # GitHub Marketplace rejects a description of 125 characters or more, and this string is also the
 # one-line blurb shown in Marketplace search results — so it has to carry both platforms and the
 # hook inside that budget. The longer pitch lives in README.md, which the listing renders in full.
-description: "Upload an Android .apk or iOS .ipa from CI and get an over-the-air install link. Try it with no token first."
+description: "Upload an Android .apk or iOS .ipa from CI and get an over-the-air install link."
 author: "BetaDrop"
 
 branding:
@@ -32,18 +32,20 @@ inputs:
     description: >-
       A BetaDrop API token (bd_live_…). Create one at betadrop.app under
       Settings → Developer → API tokens, and store it as a repository secret — never inline
-      it in the workflow. Optional: without one the build is uploaded as a guest, with a warning
-      on the run. A guest link lasts 24 hours and each repository gets 1 guest upload every 30
-      days; a token keeps builds on your account and unlocks every other input. Guest uploads
-      need @betadrop/cli 0.5.0 or newer.
+      it in the workflow. Needed unless require-token is set to false; then a run without one
+      uploads the build as a guest, with a warning on the run. A guest link is public, lasts 24
+      hours, and each repository gets 1 guest upload every 30 days; a token keeps builds on your
+      account and unlocks every other input. Guest uploads need @betadrop/cli 0.5.0 or newer.
     required: false
     default: ""
   require-token:
     description: >-
-      Fail the step when no token is supplied, instead of uploading as a guest. Set this when an
-      empty token can only mean a misconfigured secret.
+      Fail the step when no token is supplied (the default). Set it to false to let a run with no
+      token upload the build as a guest instead: a public link that lasts 24 hours. Leave it true
+      wherever the secret can be empty without anyone meaning it, such as pull_request runs from
+      forks and Dependabot, which GitHub runs without secrets.
     required: false
-    default: "false"
+    default: "true"
   name:
     description: "Override the build name shown on the install page (defaults to the app's own name)."
     required: false
@@ -183,15 +185,17 @@ runs:
         # literally — or read out of a file by a previous step — is not, and would print in
         # clear if any command here ever echoed it. Registering the mask costs one line.
         #
-        # No token is a guest upload, not an error: since v1.5.0 a first run works with nothing to
-        # set up. `require-token: true` restores the old refusal for teams who would rather an
-        # empty secret failed loudly than published a 24-hour guest build. A pull_request from a
-        # fork lands here too, because the runner hands forks empty secrets.
+        # No token fails the step unless require-token is explicitly false. Fail-closed is the
+        # default on purpose: a pull_request from a fork or a Dependabot run gets an empty secret,
+        # and on @v1 an empty secret has always meant "stop", never "publish this build publicly
+        # as a 24-hour guest link". Anything other than the literal "false" keeps the refusal, so
+        # a typo cannot turn guest uploads on. With require-token: false a first run works with
+        # nothing to set up.
         guest=0
         if [ -n "${BETADROP_TOKEN:-}" ]; then
           echo "::add-mask::$BETADROP_TOKEN"
-        elif [ "${INPUT_REQUIRE_TOKEN:-false}" = "true" ]; then
-          echo "::error::No token supplied, and require-token is true. Create a BetaDrop API token at betadrop.app under Settings → Developer → API tokens, store it as a repository secret, and pass it to this action's token: input. See https://betadrop.app/docs/github-action/#token"
+        elif [ "${INPUT_REQUIRE_TOKEN:-true}" != "false" ]; then
+          echo "::error::No token supplied. Create a BetaDrop API token at betadrop.app under Settings → Developer → API tokens, store it as a repository secret, and pass it to this action's token: input. To upload without one as a public 24-hour guest link instead, set require-token: false. See https://betadrop.app/docs/github-action/#token"
           exit 1
         else
           guest=1
