@@ -491,10 +491,10 @@ jobs:
             'install-url=https://betadrop\.app/install/\?i=stub123' \
             INPUT_FILE='single/*.apk' INPUT_NAME= INPUT_NOTES= INPUT_STANDING_LINK= INPUT_CHANNEL= INPUT_EXPIRES_IN_DAYS= INPUT_MAX_DOWNLOADS= INPUT_MAX_DEVICES= INPUT_INSPECT=false INPUT_REQUIRE_TOKEN=true CLI_VERSION=latest BETADROP_TOKEN=bd_live_stub
           if grep -q 'Guest upload' check.txt sum.txt || ! grep -qx 'guest-expires-at=' out.txt \
-             || ! grep -q 'stub-env: via=unset token=bd_live_stub' check.txt; then
-            echo "  FAIL  a token run looks like a guest run"; sed 's/^/        | /' check.txt; fail=$((fail + 1))
+             || ! grep -q 'stub-env: via=action token=bd_live_stub' check.txt; then
+            echo "  FAIL  a token run looks like a guest run, or is not labelled as the action"; sed 's/^/        | /' check.txt; fail=$((fail + 1))
           else
-            echo "  ok    a token run is unchanged: token passed, no guest warning, empty expiry"; pass=$((pass + 1))
+            echo "  ok    a token run keeps its token, names the action as the client, raises no guest warning"; pass=$((pass + 1))
           fi
 
           echo "── the shape of what is written ──"
