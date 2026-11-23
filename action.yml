@@ -192,6 +192,9 @@ runs:
         # as a 24-hour guest link". Anything other than the literal "false" keeps the refusal, so
         # a typo cannot turn guest uploads on. With require-token: false a first run works with
         # nothing to set up.
+        # Tell the CLI which client it is on every run, token or not: the server labels each upload
+        # by client, and token runs used to be counted as plain `cli`.
+        export BETADROP_VIA=action
         guest=0
         if [ -n "${BETADROP_TOKEN:-}" ]; then
           echo "::add-mask::$BETADROP_TOKEN"
@@ -200,10 +203,9 @@ runs:
           exit 1
         else
           guest=1
-          # Unset rather than empty, and tell the CLI which client it is: the server counts guest
-          # uploads per client, and the CLI words its "add a token" steps for this action.
+          # Unset rather than empty. BETADROP_VIA (set above) also makes the CLI word its "add a
+          # token" steps for this action, and the server counts guest uploads per client.
           unset BETADROP_TOKEN
-          export BETADROP_VIA=action
           # Guest uploads arrived in @betadrop/cli 0.5.0, the release that also added
           # --require-token, so that flag in the help is the capability probe. An older CLI would
           # otherwise fail with "not logged in", which names neither the version nor the fix.
