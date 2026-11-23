@@ -58,10 +58,11 @@ inputs:
     description: >-
       A standing-link slug to point at this build once it is live — e.g. acmebeta. That one URL
       (and any "Download from BetaDrop" button embedded with it) then serves this build with
-      nothing to click, so testers never need a new link. Pro and Studio plans; claim the name
-      first at betadrop.app/standing-links. A name that cannot be used fails the step before
-      anything is uploaded; if the upload lands but the link could not be moved afterwards, the
-      step fails too, so a green run means it really did move. Requires @betadrop/cli 0.3.0 or
+      nothing to click, so testers never need a new link. A free account holds one standing link,
+      and Pro and Studio hold up to 50; claim the name first at betadrop.app/standing-links. A
+      name that cannot be used fails the step before anything is uploaded; if the upload lands
+      but the link could not be moved afterwards, the step fails too, so a green run means it
+      really did move. Requires @betadrop/cli 0.3.0 or
       newer — the step checks the installed CLI and says so by name if the version is too old.
     required: false
     default: ""
