@@ -1,4 +1,4 @@
-# BetaDrop Upload Action
+# BetaDrop IPA & APK App Distribution
 
 [![Listed on the GitHub Marketplace](https://img.shields.io/badge/Marketplace-BetaDrop%20IPA%20%26%20APK%20App%20Distribution-2ea44f?logo=github)](https://github.com/marketplace/actions/betadrop-ipa-apk-app-distribution)
 [![Runners: ubuntu · macos · windows](https://img.shields.io/badge/runners-ubuntu%20%C2%B7%20macos%20%C2%B7%20windows-0b64fc)](#notes)
@@ -120,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Build the .ipa
-        run: fastlane gym --export_method release-testing
+        run: fastlane gym --export_method ad-hoc
       - name: Publish to BetaDrop
         uses: betadrop-app/upload-action@v1
         with:
@@ -131,13 +131,12 @@ jobs:
 fastlane is preinstalled on the `macos` images, so `fastlane gym` runs without a setup step —
 use `bundle exec fastlane gym` only if your repository has a Gemfile pinning it.
 
-`release-testing` is Apple's current name for ad-hoc distribution. gym copies this value
-straight into the ExportOptions plist's `method` key, where Apple deprecated `ad-hoc` in
-Xcode 15.4 — and Xcode 26, which is what `macos-latest` resolves to on GitHub-hosted
-runners, rejects it outright. If your fastlane is old enough to reject the new name, pass
-it through `export_options: { method: "release-testing" }` in a Fastfile instead. Either
-way the export runs before this action does, so getting it wrong fails the build a step
-early.
+`ad-hoc` is the name gym accepts. Apple renamed the method `release-testing` in Xcode 15.4,
+and current Xcode still takes `ad-hoc` with a deprecation warning, but gym (2.242.0 and
+earlier) refuses `release-testing` with "Unsupported export_method". To export under the new
+name, run `xcodebuild -exportArchive` with an ExportOptions plist whose `method` is
+`release-testing`. Either way the export runs before this action does, so getting it wrong
+fails the build a step early.
 
 ### Post the link on the pull request
 
@@ -289,7 +288,7 @@ did not touch it. Pin it once you are past setup:
   with:
     file: "*.ipa"
     token: ${{ secrets.BETADROP_TOKEN }}
-    cli-version: "0.4.0"
+    cli-version: "0.5.0"
 ```
 
 ## Troubleshooting
@@ -338,12 +337,13 @@ breaks the contract this action reads. Report it; the last line of the run log i
 
 ## Also from BetaDrop
 
-The same publish step, on the other two surfaces — one account, one set of API tokens:
+The same publish step, from other places — one account, one set of API tokens:
 
 | | |
 |---|---|
 | **[`@betadrop/cli`](https://www.npmjs.com/package/@betadrop/cli)**<br><sub>[source](https://github.com/betadrop-app/betadrop-cli)</sub> | `betadrop publish app.ipa` from your terminal. Prints the install link and a scannable QR code. |
-| **[`@betadrop/mcp`](https://www.npmjs.com/package/@betadrop/mcp)**<br><sub>[source](https://github.com/betadrop-app/betadrop-mcp)</sub> | MCP server — publish builds, list history and manage tokens by asking Claude, Cursor or Copilot, without leaving the editor. |
+| **[`@betadrop/mcp`](https://www.npmjs.com/package/@betadrop/mcp)**<br><sub>[source](https://github.com/betadrop-app/betadrop-mcp)</sub> | MCP server — publish builds, check they will install, move standing links and read tester feedback by asking Claude, ChatGPT, Cursor or Copilot. Hosted at `https://api.betadrop.app/mcp`, or run locally with `npx -y @betadrop/mcp`. |
+| **[`fastlane-plugin-betadrop`](https://rubygems.org/gems/fastlane-plugin-betadrop)**<br><sub>[source](https://github.com/betadrop-app/fastlane-plugin-betadrop)</sub> | `fastlane add_plugin betadrop`, then `betadrop` after `gym` or `gradle` in your lane. |
 
 ## Contributing
 
